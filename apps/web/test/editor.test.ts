@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Topic } from "xmind-workbook";
-import { layoutMap } from "../src/layout.ts";
+import { defaultSheetTheme, type Topic } from "xmind-workbook";
+import { layoutMap, relationshipCurve } from "../src/layout.ts";
+import { isKnownMarker, markerLabel } from "../src/marker-catalog.ts";
 import { plainToRealHtml, toMarkdown, toOpml } from "../src/markdown.ts";
 import { pdfFromRgb } from "../src/pdf.ts";
 import { displayFont } from "../src/structures.ts";
 import { sceneToSvg } from "../src/svg.ts";
-import { resolveTheme } from "../src/theme.ts";
-import { addChild, addFloating, addParent, moveAttached, renameTopic, setFolded, setNotes, toggleMarker } from "../src/tree.ts";
+import { activeQuickRole, chipFill, quickRoleProperties, quickStyleKeys, resolveTheme } from "../src/theme.ts";
+import { addChild, addFloating, addMasterBoundary, addParent, addSummary, moveAttached, renameTopic, setFolded, setNotes, setQuickStyle, toggleMarker } from "../src/tree.ts";
 
 function topic(id: string, title: string, children: Topic[] = []): Topic {
   return { id, title, children: { attached: children } };
@@ -169,6 +170,138 @@ test("theme roles color branches, elbows, and map NeverMind to Inter", () => {
   assert.match(svg, /Group/);
   assert.match(svg, /Inter/);
   assert.equal(svg.includes("NeverMind"), false);
+});
+
+test("labels are drawn on the topic, and only master or (i,j) ranges become boxes", () => {
+  const plain = topic("r", "Root", [topic("a", "Alpha"), topic("b", "Beta")]);
+  const labeled = topic("r", "Root", [topic("a", "Alpha"), topic("b", "Beta")]);
+  labeled.children!.attached![0]!.labels = [" source ", ""];
+  const withLabels = layoutMap(labeled, "org.xmind.ui.logic.right");
+  const without = layoutMap(plain, "org.xmind.ui.logic.right");
+  const alpha = withLabels.nodes.find((node) => node.id === "a");
+  const plainAlpha = without.nodes.find((node) => node.id === "a");
+  assert.ok(alpha && plainAlpha);
+  assert.deepEqual(alpha.labels, ["source"]);
+  assert.ok(alpha.h > plainAlpha.h);
+  const svg = sceneToSvg(withLabels, { rootTopic: labeled }, resolveTheme(undefined));
+  assert.match(svg, /source/);
+
+  labeled.boundaries = [
+    { id: "custom", range: "custom", title: "Nope" },
+    { id: "span", range: "(0,0)", title: "First" },
+    { id: "all", range: "master", title: "Group" },
+  ];
+  const scene = layoutMap(labeled, "org.xmind.ui.logic.right");
+  assert.deepEqual(
+    scene.boundaries.map((item) => item.title),
+    ["First", "Group"],
+  );
+  assert.equal(labeled.boundaries[0]?.range, "custom");
+  const root = topic("r", "Root", [topic("a", "Alpha"), topic("b", "Beta")]);
+  addMasterBoundary(root);
+  addSummary(root);
+  assert.equal(root.boundaries?.[0]?.range, "master");
+  assert.equal(root.summaries?.[0]?.range, "(0,1)");
+});
+
+test("boundary solid fill is the region and inherited text is not the svg fill", () => {
+  const solid = resolveTheme({
+    boundary: {
+      properties: {
+        "fill-pattern": "solid",
+        "svg:fill": "#000229",
+        "fo:color": "inherited",
+        "line-color": "#000229",
+        "line-width": "2",
+        "line-pattern": "dash",
+      },
+    },
+  }).boundary();
+  assert.equal(solid.fill.toLowerCase(), "#000229");
+  assert.equal(solid.text.toLowerCase(), "#f8fafc");
+  const masked = resolveTheme({
+    boundary: {
+      properties: {
+        "fill-pattern": "none",
+        "svg:fill": "#000229",
+        "fo:color": "inherited",
+        "line-color": "#8a8175",
+      },
+    },
+  }).boundary();
+  assert.equal(masked.fill, "none");
+  assert.equal(masked.text.toLowerCase(), "#8a8175");
+  const root = topic("r", "Root", [topic("a", "Alpha")]);
+  root.boundaries = [{ id: "bd", range: "master", title: "Group" }];
+  const theme = {
+    boundary: {
+      properties: {
+        "fill-pattern": "solid",
+        "svg:fill": "#000229",
+        "fo:color": "inherited",
+        "line-color": "#000229",
+      },
+    },
+  };
+  const svg = sceneToSvg(layoutMap(root, "org.xmind.ui.logic.right", theme), { rootTopic: root }, resolveTheme(theme));
+  assert.match(svg, /fill="#000229"/);
+  assert.match(svg, /fill="#f8fafc"/);
+  const resolved = resolveTheme(theme);
+  assert.equal(chipFill(resolved.topic("main", 0).fill, resolved.canvas), resolved.canvas);
+});
+
+test("color-list is ignored and branch color stays on multi-line-colors", () => {
+  const resolved = resolveTheme({
+    map: { properties: { "multi-line-colors": "#F9423A #F6A04D", "color-list": "#00ff00 #0000ff" } },
+    mainTopic: { properties: { "svg:fill": "inherited", "fo:color": "inherited", "fill-pattern": "solid" } },
+  });
+  assert.equal(resolved.topic("main", 0).text.toLowerCase(), "#f9423a");
+  assert.equal(resolved.topic("main", 1).text.toLowerCase(), "#f6a04d");
+  assert.notEqual(resolved.topic("main", 0).text.toLowerCase(), "#00ff00");
+});
+
+test("quick style copies a theme role and leaves other style keys", () => {
+  const theme = defaultSheetTheme();
+  const node: Topic = { id: "a", title: "A", style: { id: "keep", properties: { "fo:font-size": "20pt" } } };
+  const important = quickRoleProperties(theme, "importantTopic");
+  setQuickStyle(node, important, quickStyleKeys(theme));
+  assert.equal(node.style?.id, "keep");
+  assert.equal(node.style?.properties?.["fo:font-size"], "20pt");
+  assert.equal(node.style?.properties?.["svg:fill"], important["svg:fill"]);
+  assert.equal(activeQuickRole(theme, node.style?.properties), "importantTopic");
+  assert.equal(resolveTheme(theme).topic("main", 0, node.style?.properties).fill, important["svg:fill"]);
+  setQuickStyle(node, quickRoleProperties(theme, "expiredTopic"), quickStyleKeys(theme));
+  assert.equal(node.style?.properties?.["svg:fill"], undefined);
+  assert.equal(activeQuickRole(theme, node.style?.properties), "expiredTopic");
+  const expired = resolveTheme(theme).topic("main", 0, node.style?.properties);
+  assert.equal(expired.decoration, "line-through");
+  assert.equal(expired.fill, "transparent");
+  setQuickStyle(node, null, quickStyleKeys(theme));
+  assert.equal(node.style?.properties?.["fo:font-size"], "20pt");
+  assert.equal(activeQuickRole(theme, node.style?.properties), null);
+});
+
+test("marker catalog covers the open set and leaves unknown ids unlabeled", () => {
+  assert.equal(markerLabel("priority-1"), "Priority 1");
+  assert.equal(markerLabel("task-done"), "Task done");
+  assert.equal(markerLabel("flag-dark-blue"), "Flag dark blue");
+  assert.equal(markerLabel("c_symbol_pen"), "Pen");
+  assert.equal(isKnownMarker("priority-9"), true);
+  assert.equal(isKnownMarker("c_symbol_pen"), true);
+  assert.equal(isKnownMarker("symbol-lightning"), false);
+  assert.equal(isKnownMarker("tag-blue"), false);
+  assert.equal(markerLabel("tag-blue"), "tag-blue");
+});
+
+test("relationship curve stays a midpoint quadratic", () => {
+  const root = topic("r", "Root", [topic("a", "Alpha"), topic("b", "Beta")]);
+  const scene = layoutMap(root, "org.xmind.ui.logic.right");
+  const from = scene.nodes.find((node) => node.id === "a");
+  const to = scene.nodes.find((node) => node.id === "b");
+  assert.ok(from && to);
+  const curve = relationshipCurve(from, to, "Depends", "rel");
+  assert.match(curve.d, /\bQ\b/);
+  assert.equal(curve.title, "Depends");
 });
 
 test("parent insert, floating position, and pdf header", async () => {

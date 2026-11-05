@@ -2,7 +2,7 @@ import type { Sheet, Topic } from "xmind-workbook";
 import { ChevronDown, ChevronRight, Link } from "lucide-react";
 import { edgePath, relationshipCurve, type MapNode, type Scene } from "./layout.ts";
 import { MarkerGlyph } from "./markers.tsx";
-import type { ResolvedTheme } from "./theme.ts";
+import { chipFill, type ResolvedTheme } from "./theme.ts";
 
 export function MapView({
   scene,
@@ -58,12 +58,13 @@ export function MapView({
         {scene.boundaries.map((boundary, index) => (
           <g key={`b-${index}`}>
             <rect
+              data-kind="boundary"
               x={boundary.x}
               y={boundary.y}
               width={boundary.w}
               height={boundary.h}
               rx="12"
-              fill="none"
+              fill={boundaryPaint.fill === "none" ? "none" : boundaryPaint.fill}
               stroke={boundaryPaint.color}
               strokeWidth={boundaryPaint.width}
               strokeDasharray={boundaryPaint.dash || undefined}
@@ -185,7 +186,7 @@ function TopicNode({
   const paint = theme.topic(node.kind, Math.max(0, node.branchIndex), topic?.style?.properties);
   const dropRing = dropMode === "child" ? "ring-2 ring-indigo-600" : dropMode === "before" ? "ring-2 ring-emerald-600 ring-offset-2" : dropMode === "after" ? "ring-2 ring-amber-600" : "";
   const face = {
-    background: paint.fill === "transparent" ? "transparent" : paint.fill,
+    background: chipFill(paint.fill, theme.canvas),
     color: paint.text,
     borderStyle: "solid",
     borderWidth: paint.borderWidth,
@@ -263,7 +264,8 @@ function TopicNode({
           type="button"
           draggable={node.kind !== "central"}
           title={label}
-          className={`flex h-full w-full items-center gap-1.5 overflow-hidden px-3 text-left whitespace-pre leading-tight ${selected ? "outline-2 outline-offset-2 outline-indigo-600" : ""} ${dropRing}`}
+          aria-label={label}
+          className={`flex h-full w-full items-center gap-1.5 overflow-hidden px-3 text-left leading-tight ${selected ? "outline-2 outline-offset-2 outline-indigo-600" : ""} ${dropRing}`}
           style={face}
           onClick={(event) => {
             event.stopPropagation();
@@ -284,7 +286,18 @@ function TopicNode({
               <MarkerGlyph key={marker.markerId} markerId={marker.markerId} />
             ))}
           </span>
-          <span className="truncate">{label}</span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate whitespace-pre">{label}</span>
+            {node.labels.length > 0 && (
+              <span className="mt-0.5 flex max-w-full gap-1 overflow-hidden">
+                {node.labels.map((item) => (
+                  <span key={item} className="shrink-0 rounded-full border border-current/40 px-1.5 text-[10px] leading-4 font-medium">
+                    {item}
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
           {topic?.href?.startsWith("http") && <Link className="size-3 shrink-0" aria-hidden />}
         </button>
       )}

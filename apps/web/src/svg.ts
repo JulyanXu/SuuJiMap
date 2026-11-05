@@ -1,6 +1,6 @@
 import type { Sheet } from "xmind-workbook";
-import { edgePath, relationshipCurve, type Scene } from "./layout.ts";
-import { resolveTheme, type ResolvedTheme } from "./theme.ts";
+import { edgePath, relationshipCurve, type MapNode, type Scene } from "./layout.ts";
+import { chipFill, resolveTheme, type ResolvedTheme, type TopicPaint } from "./theme.ts";
 
 function escapeXml(value: string): string {
   return value
@@ -12,6 +12,23 @@ function escapeXml(value: string): string {
 
 function num(value: number): string {
   return String(Math.round(value * 100) / 100);
+}
+
+function labelMarks(node: MapNode, paint: TopicPaint): string[] {
+  if (node.labels.length === 0) return [];
+  const parts: string[] = [];
+  let x = node.x + 10;
+  const y = node.y + node.h - 5;
+  for (const label of node.labels) {
+    const w = Math.max(16, Array.from(label).length * 5.6 + 10);
+    if (x + w > node.x + node.w - 6) break;
+    parts.push(
+      `<rect x="${num(x)}" y="${num(y - 11)}" width="${num(w)}" height="13" rx="6" fill="none" stroke="${escapeXml(paint.text)}" stroke-width="0.6"/>`,
+      `<text x="${num(x + 5)}" y="${num(y - 1.5)}" fill="${escapeXml(paint.text)}" font-family="${escapeXml(paint.fontFamily)}" font-size="9">${escapeXml(label)}</text>`,
+    );
+    x += w + 4;
+  }
+  return parts;
 }
 
 /** Vector export of the current scene. Fonts are the resolved open stack (NeverMind → Inter). */
@@ -34,7 +51,7 @@ export function sceneToSvg(scene: Scene, sheet: Sheet, theme: ResolvedTheme = re
 
   for (const item of scene.boundaries) {
     parts.push(
-      `<rect x="${num(item.x)}" y="${num(item.y)}" width="${num(item.w)}" height="${num(item.h)}" rx="12" fill="none" stroke="${escapeXml(boundary.color)}" stroke-width="${num(boundary.width)}"${boundary.dash ? ` stroke-dasharray="${boundary.dash}"` : ""}/>`,
+      `<rect x="${num(item.x)}" y="${num(item.y)}" width="${num(item.w)}" height="${num(item.h)}" rx="12" fill="${boundary.fill === "none" ? "none" : escapeXml(boundary.fill)}" stroke="${escapeXml(boundary.color)}" stroke-width="${num(boundary.width)}"${boundary.dash ? ` stroke-dasharray="${boundary.dash}"` : ""}/>`,
     );
     if (item.title) {
       parts.push(
@@ -80,7 +97,7 @@ export function sceneToSvg(scene: Scene, sheet: Sheet, theme: ResolvedTheme = re
   for (const node of scene.nodes) {
     const paint = theme.topic(node.kind, Math.max(0, node.branchIndex));
     const radius = Math.min(paint.radius, node.h / 2);
-    const fill = paint.fill === "transparent" ? "none" : paint.fill;
+    const fill = chipFill(paint.fill, theme.canvas);
     parts.push(
       `<rect x="${num(node.x)}" y="${num(node.y)}" width="${num(node.w)}" height="${num(node.h)}" rx="${num(radius)}" fill="${escapeXml(fill)}" stroke="${escapeXml(paint.border)}" stroke-width="${num(paint.borderWidth)}"/>`,
     );
@@ -91,6 +108,7 @@ export function sceneToSvg(scene: Scene, sheet: Sheet, theme: ResolvedTheme = re
         `<text x="${num(node.x + 12)}" y="${num(y)}" fill="${escapeXml(paint.text)}" font-family="${escapeXml(paint.fontFamily)}" font-size="${num(paint.fontSize)}" font-weight="${paint.fontWeight}"${paint.decoration === "line-through" ? ` text-decoration="line-through"` : ""}>${escapeXml(line)}</text>`,
       );
     });
+    parts.push(...labelMarks(node, paint));
   }
 
   parts.push("</svg>\n");

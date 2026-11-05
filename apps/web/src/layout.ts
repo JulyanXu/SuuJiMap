@@ -20,6 +20,7 @@ export interface MapNode {
   hasChildren: boolean;
   branchIndex: number;
   lineClass: "curve" | "roundedElbow";
+  labels: string[];
 }
 
 export interface Bounds {
@@ -55,25 +56,32 @@ interface RawNode {
   folded: boolean;
   hasChildren: boolean;
   branchIndex: number;
+  labels: string[];
 }
 
 const H_GAP = 72;
 const V_GAP = 22;
 
-function measure(title: string, fontPx: number, root: boolean): { w: number; h: number } {
+function measure(title: string, fontPx: number, root: boolean, labels: string[]): { w: number; h: number } {
   const lines = (title || " ").split("\n");
   const longest = Math.max(...lines.map((line) => Array.from(line).length), 1);
   const char = Math.max(7, fontPx * 0.56);
-  const w = Math.min(460, Math.max(root ? 168 : 112, Math.round(longest * char + fontPx * 1.4)));
-  const h = Math.max(36, lines.length * (fontPx * 1.25) + 16);
+  let w = Math.min(460, Math.max(root ? 168 : 112, Math.round(longest * char + fontPx * 1.4)));
+  let h = Math.max(36, lines.length * (fontPx * 1.25) + 16);
+  if (labels.length > 0) {
+    const chips = labels.reduce((sum, label) => sum + Array.from(label).length * 6.2 + 14, 8);
+    w = Math.min(520, Math.max(w, Math.round(chips)));
+    h += 18;
+  }
   return { w, h };
 }
 
 function shape(topic: Topic, path: string, kind: NodeKind, branchIndex: number, resolved: ResolvedTheme): RawNode {
   const id = topic.id && topic.id.trim() !== "" ? topic.id : path;
   const title = topic.title ?? "";
+  const labels = (topic.labels ?? []).map((label) => label.trim()).filter((label) => label.length > 0);
   const paint = resolved.topic(kind, Math.max(0, branchIndex), topic.style?.properties);
-  const size = measure(title, paint.fontSize, kind === "central");
+  const size = measure(title, paint.fontSize, kind === "central", labels);
   const attached = topic.children?.attached ?? [];
   const children = isFolded(topic)
     ? []
@@ -89,6 +97,7 @@ function shape(topic: Topic, path: string, kind: NodeKind, branchIndex: number, 
     folded: isFolded(topic),
     hasChildren: attached.length > 0,
     branchIndex: kind === "central" ? -1 : branchIndex,
+    labels,
   };
 }
 
@@ -107,6 +116,7 @@ function box(node: RawNode, parentId: string | null, x: number, y: number, side:
     hasChildren: node.hasChildren,
     branchIndex: node.branchIndex,
     lineClass: "curve",
+    labels: node.labels,
   };
 }
 
@@ -292,6 +302,7 @@ function placeDetached(raw: RawNode, anchorX: number, anchorY: number, parentId:
   return laid;
 }
 
+/** Measured ranges are `master` and `(start,end)`. Other strings are not drawn and are not rewritten. */
 function parseSpan(range: string | undefined, count: number): number[] {
   if (!range || range === "master") return Array.from({ length: count }, (_, index) => index);
   const match = /^\((\d+),(\d+)\)$/.exec(range);
@@ -551,6 +562,10 @@ export function edgePath(parent: MapNode, child: MapNode, structure: StructureId
   return `M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}`;
 }
 
+/**
+ * Midpoint quadratic. This is a labeled drawing fallback, not a measured curve.
+ * Relationship controlPoints stay on the sheet; their coordinate space is unmeasured, so they are not applied here.
+ */
 export function relationshipCurve(from: MapNode, to: MapNode, title: string | undefined, id: string): Curve {
   const x1 = from.x + from.w / 2;
   const y1 = from.y + from.h / 2;

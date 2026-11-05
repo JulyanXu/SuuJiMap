@@ -157,6 +157,11 @@ function Row(props: {
             {label}
           </button>
         )}
+        {(topic.labels ?? []).map((item) => (
+          <span key={item} className="rounded-full border border-zinc-300 px-1.5 text-[10px] leading-4 text-zinc-700">
+            {item}
+          </span>
+        ))}
       </div>
       {children.map((child) => (
         <Row key={child.id} {...props} topic={child} depth={depth + 1} />
