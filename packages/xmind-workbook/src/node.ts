@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { readXMind, writeXMind } from "./index.js";
 import type { Workbook } from "./types.js";
 
-export { readXMind, writeXMind } from "./index.js";
+export { readXMind, resourceZipPath, updateManifestMetadata, writeXMind } from "./index.js";
 export type {
   Boundary,
   Extension,

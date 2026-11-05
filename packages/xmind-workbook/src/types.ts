@@ -41,6 +41,11 @@ export interface Style {
   properties?: Record<string, string>;
 }
 
+/**
+ * Measured SDK image (xmind 2.2.33): `{ src, width?, height?, align? }`.
+ * `src` is `xap:resources/<uuid>` with no file extension. width, height, and align are optional.
+ * The only measured align value is `"bottom"`. Unknown keys on this object are preserved.
+ */
 export interface TopicImage {
   src?: string;
   width?: number;

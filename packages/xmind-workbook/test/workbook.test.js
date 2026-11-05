@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { strToU8, unzipSync, zipSync } from "fflate/browser";
-import { readXMind, writeXMind } from "../dist/index.js";
+import { readXMind, resourceZipPath, writeXMind } from "../dist/index.js";
 import { readXMindFile, writeXMindFile } from "../dist/node.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -107,7 +107,7 @@ test("fresh write emits the MVP member set, STORE, and reads back", () => {
   assert.match(writtenSheets[0].rootTopic.id, uuidV4);
   assert.equal(writtenSheets[0].rootTopic.children.attached[0].class, undefined);
   assert.deepEqual(JSON.parse(decode(entries["manifest.json"])), {
-    "file-entries": { "content.json": {}, "metadata.json": {} },
+    "file-entries": { "content.json": {}, "metadata.json": {}, "resources/pic.bin": {} },
   });
   assert.deepEqual(JSON.parse(decode(entries["metadata.json"])), {
     dataStructureVersion: "2",
@@ -359,4 +359,103 @@ test("rejects empty workbooks and archives without a map", () => {
   assert.throws(() => readXMind(new Uint8Array([1, 2, 3, 4])), /not a zip archive/);
   const empty = zipSync({ "readme.txt": [strToU8("nope"), { level: 0 }] }, { level: 0 });
   assert.throws(() => readXMind(empty), /content\.json/);
+});
+
+test("img-measure image src, bytes, and manifest entry survive read write read", () => {
+  assert.equal(
+    resourceZipPath("xap:resources/1a7a2536-91a1-4396-863b-e25006871de5"),
+    "resources/1a7a2536-91a1-4396-863b-e25006871de5",
+  );
+  assert.equal(resourceZipPath("https://example.com/a.png"), null);
+  assert.equal(resourceZipPath("xap:attachments/a"), null);
+
+  const book = readXMind(load("img-measure.xmind"));
+  assert.equal(book.source, "content.json");
+  assert.equal(book.metadata && Object.keys(book.metadata).length, 0);
+  const topic = book.sheets[0].rootTopic.children.attached[0];
+  assert.equal(topic.title, "with image");
+  assert.equal(topic.id, "d88a8b38-0c1c-41f2-aedc-fc61898cbeb1");
+  assert.deepEqual(topic.image, {
+    src: "xap:resources/1a7a2536-91a1-4396-863b-e25006871de5",
+    width: 64,
+    height: 64,
+    align: "bottom",
+  });
+  const resourceId = "1a7a2536-91a1-4396-863b-e25006871de5";
+  assert.notEqual(topic.id, resourceId);
+  assert.equal(resourceId.includes("."), false);
+  const member = book.extras.find((entry) => entry.name === `resources/${resourceId}`);
+  assert.equal(member.data.length, 70);
+  assert.equal(member.data[0], 0x89);
+  assert.equal(member.data[1], 0x50);
+  assert.deepEqual(book.manifest["file-entries"][`resources/${resourceId}`], {});
+  assert.equal(book.manifest["file-entries"]["content.xml"], undefined);
+  assert.equal(book.manifest["file-entries"]["resources/"], undefined);
+
+  topic.image.vendor = "keep";
+  const again = readXMind(writeXMind(book));
+  const againTopic = again.sheets[0].rootTopic.children.attached[0];
+  assert.equal(againTopic.id, topic.id);
+  assert.equal(againTopic.image.src, topic.image.src);
+  assert.equal(againTopic.image.width, 64);
+  assert.equal(againTopic.image.height, 64);
+  assert.equal(againTopic.image.align, "bottom");
+  assert.equal(againTopic.image.vendor, "keep");
+  assert.equal(Object.hasOwn(againTopic.image, "media-type"), false);
+  const againMember = again.extras.find((entry) => entry.name === `resources/${resourceId}`);
+  assert.deepEqual(againMember.data, member.data);
+  assert.deepEqual(again.manifest["file-entries"][`resources/${resourceId}`], {});
+  assert.equal(again.manifest["file-entries"]["content.xml"], undefined);
+  assert.equal(again.metadata && Object.keys(again.metadata).length, 0);
+});
+
+test("image write lists every resources file and does not invent image fields", () => {
+  const data = new Uint8Array([1, 2, 3, 4]);
+  const named = new Uint8Array([9]);
+  const book = {
+    sheets: [
+      {
+        title: "Images",
+        rootTopic: {
+          id: "topic-1",
+          title: "Root",
+          children: {
+            attached: [
+              { id: "topic-2", title: "Src only", image: { src: "xap:resources/only-src", extra: true } },
+              { id: "topic-3", title: "Named", image: { src: "xap:resources/photo.png", width: 10, height: 12 } },
+            ],
+          },
+        },
+      },
+    ],
+    manifest: {
+      "file-entries": {
+        "content.json": {},
+        "metadata.json": {},
+        "resources/only-src": { "media-type": "image/png" },
+      },
+    },
+    extras: [
+      { name: "resources/", data: new Uint8Array() },
+      { name: "resources/only-src", data },
+      { name: "resources/photo.png", data: named },
+    ],
+  };
+  const manifest = JSON.parse(decode(unzipSync(writeXMind(book))["manifest.json"]));
+  assert.deepEqual(manifest["file-entries"]["resources/only-src"], { "media-type": "image/png" });
+  assert.deepEqual(manifest["file-entries"]["resources/photo.png"], {});
+  assert.equal(manifest["file-entries"]["resources/"], undefined);
+  assert.equal(manifest["file-entries"]["content.xml"], undefined);
+
+  const again = readXMind(writeXMind(book));
+  const srcOnly = again.sheets[0].rootTopic.children.attached[0].image;
+  assert.deepEqual(srcOnly, { src: "xap:resources/only-src", extra: true });
+  assert.equal(srcOnly.width, undefined);
+  assert.equal(srcOnly.height, undefined);
+  assert.equal(srcOnly.align, undefined);
+  const photo = again.sheets[0].rootTopic.children.attached[1].image;
+  assert.deepEqual(photo, { src: "xap:resources/photo.png", width: 10, height: 12 });
+  assert.equal(photo.align, undefined);
+  assert.deepEqual(again.extras.find((entry) => entry.name === "resources/only-src").data, data);
+  assert.deepEqual(again.extras.find((entry) => entry.name === "resources/photo.png").data, named);
 });

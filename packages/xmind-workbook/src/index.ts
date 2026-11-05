@@ -1,9 +1,12 @@
 import { sheetsFromContentXml } from "./legacy.js";
+import { updateManifestMetadata } from "./resources.js";
 import { defaultSheetTheme } from "./theme.js";
 import { coerceTopicFields, prepareWorkbook } from "./prepare.js";
 import { CONTENT_XML_STUB_TEXT } from "./stub.js";
 import type { Manifest, Metadata, Sheet, Workbook, ZipMember } from "./types.js";
 import { unzipMembers, zipStored } from "./zip.js";
+
+export { resourceZipPath, updateManifestMetadata } from "./resources.js";
 
 export { defaultSheetTheme };
 
@@ -155,6 +158,8 @@ export function writeXMind(workbook: Workbook): Uint8Array {
     }
     rest.push(extra);
   }
+
+  updateManifestMetadata(prepared.manifest, rest);
 
   const members: ZipMember[] = [];
   if (mimetype) members.push(mimetype);

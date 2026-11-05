@@ -13,6 +13,7 @@ export function MapView({
   editingId,
   draft,
   dropHint,
+  imageUrls,
   onDraft,
   onSelect,
   onEdit,
@@ -31,6 +32,7 @@ export function MapView({
   editingId: string | null;
   draft: string;
   dropHint: { id: string; mode: "before" | "after" | "child" } | null;
+  imageUrls: ReadonlyMap<string, string>;
   onDraft: (value: string) => void;
   onSelect: (id: string) => void;
   onEdit: (id: string) => void;
@@ -131,6 +133,7 @@ export function MapView({
           selected={node.id === selectedId}
           editing={node.id === editingId}
           draft={draft}
+          imageUrl={imageUrls.get(node.id) ?? null}
           dropMode={dropHint?.id === node.id ? dropHint.mode : null}
           onDraft={onDraft}
           onSelect={() => onSelect(node.id)}
@@ -154,6 +157,7 @@ function TopicNode({
   selected,
   editing,
   draft,
+  imageUrl,
   dropMode,
   onDraft,
   onSelect,
@@ -171,6 +175,7 @@ function TopicNode({
   selected: boolean;
   editing: boolean;
   draft: string;
+  imageUrl: string | null;
   dropMode: "before" | "after" | "child" | null;
   onDraft: (value: string) => void;
   onSelect: () => void;
@@ -265,7 +270,7 @@ function TopicNode({
           draggable={node.kind !== "central"}
           title={label}
           aria-label={label}
-          className={`flex h-full w-full items-center gap-1.5 overflow-hidden px-3 text-left leading-tight ${selected ? "outline-2 outline-offset-2 outline-indigo-600" : ""} ${dropRing}`}
+          className={`flex h-full w-full overflow-hidden px-3 text-left leading-tight ${imageUrl ? "flex-col gap-1.5" : "items-center gap-1.5"} ${selected ? "outline-2 outline-offset-2 outline-indigo-600" : ""} ${dropRing}`}
           style={face}
           onClick={(event) => {
             event.stopPropagation();
@@ -281,24 +286,36 @@ function TopicNode({
             onDragStart();
           }}
         >
-          <span aria-hidden className="flex shrink-0 gap-0.5">
-            {(topic?.markers ?? []).map((marker) => (
-              <MarkerGlyph key={marker.markerId} markerId={marker.markerId} />
-            ))}
+          <span className={`flex min-w-0 items-center gap-1.5 ${imageUrl ? "min-h-0 flex-1" : ""}`}>
+            <span aria-hidden className="flex shrink-0 gap-0.5">
+              {(topic?.markers ?? []).map((marker) => (
+                <MarkerGlyph key={marker.markerId} markerId={marker.markerId} />
+              ))}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate whitespace-pre">{label}</span>
+              {node.labels.length > 0 && (
+                <span className="mt-0.5 flex max-w-full gap-1 overflow-hidden">
+                  {node.labels.map((item) => (
+                    <span key={item} className="shrink-0 rounded-full border border-current/40 px-1.5 text-[10px] leading-4 font-medium">
+                      {item}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </span>
+            {topic?.href?.startsWith("http") && <Link className="size-3 shrink-0" aria-hidden />}
           </span>
-          <span className="flex min-w-0 flex-1 flex-col">
-            <span className="truncate whitespace-pre">{label}</span>
-            {node.labels.length > 0 && (
-              <span className="mt-0.5 flex max-w-full gap-1 overflow-hidden">
-                {node.labels.map((item) => (
-                  <span key={item} className="shrink-0 rounded-full border border-current/40 px-1.5 text-[10px] leading-4 font-medium">
-                    {item}
-                  </span>
-                ))}
-              </span>
-            )}
-          </span>
-          {topic?.href?.startsWith("http") && <Link className="size-3 shrink-0" aria-hidden />}
+          {imageUrl && node.imageH > 0 && (
+            <img
+              data-testid="topic-image"
+              src={imageUrl}
+              alt=""
+              draggable={false}
+              className="mx-auto shrink-0 object-contain"
+              style={{ width: node.imageW, height: node.imageH }}
+            />
+          )}
         </button>
       )}
     </div>

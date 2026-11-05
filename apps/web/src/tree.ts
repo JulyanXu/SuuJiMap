@@ -285,6 +285,19 @@ export function setHref(topic: Topic, href: string): void {
   else topic.href = text;
 }
 
+/** Replace topic.image with the measured fields, or remove it. Does not touch resource bytes. */
+export function setTopicImage(topic: Topic, image: { src: string; width?: number; height?: number; align?: string } | null): void {
+  if (!image?.src) {
+    delete topic.image;
+    return;
+  }
+  const next: NonNullable<Topic["image"]> = { src: image.src };
+  if (typeof image.width === "number") next.width = image.width;
+  if (typeof image.height === "number") next.height = image.height;
+  if (typeof image.align === "string" && image.align.length > 0) next.align = image.align;
+  topic.image = next;
+}
+
 export function addMasterBoundary(topic: Topic): void {
   const boundaries: Boundary[] = topic.boundaries ? [...topic.boundaries] : [];
   if (boundaries.some((item) => item.range === "master")) return;

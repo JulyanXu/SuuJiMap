@@ -20,6 +20,7 @@
   },
   "include": [
     "test/editor.test.ts",
+    "src/images.ts",
     "src/layout.ts",
     "src/markdown.ts",
     "src/pdf.ts",

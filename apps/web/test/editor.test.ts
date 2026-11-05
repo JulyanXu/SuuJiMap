@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaultSheetTheme, type Topic } from "xmind-workbook";
+import { fittedSize, sniffImageMime } from "../src/images.ts";
 import { layoutMap, relationshipCurve } from "../src/layout.ts";
 import { isKnownMarker, markerLabel } from "../src/marker-catalog.ts";
 import { plainToRealHtml, toMarkdown, toOpml } from "../src/markdown.ts";
@@ -8,7 +9,7 @@ import { pdfFromRgb } from "../src/pdf.ts";
 import { displayFont } from "../src/structures.ts";
 import { sceneToSvg } from "../src/svg.ts";
 import { activeQuickRole, chipFill, quickRoleProperties, quickStyleKeys, resolveTheme } from "../src/theme.ts";
-import { addChild, addFloating, addMasterBoundary, addParent, addSummary, moveAttached, renameTopic, setFolded, setNotes, setQuickStyle, toggleMarker } from "../src/tree.ts";
+import { addChild, addFloating, addMasterBoundary, addParent, addSummary, moveAttached, renameTopic, setFolded, setNotes, setQuickStyle, setTopicImage, toggleMarker } from "../src/tree.ts";
 
 function topic(id: string, title: string, children: Topic[] = []): Topic {
   return { id, title, children: { attached: children } };
@@ -326,4 +327,49 @@ test("parent insert, floating position, and pdf header", async () => {
   const bytes = await pdfFromRgb(2, 2, new Uint8Array(12).fill(20));
   assert.equal(new TextDecoder().decode(bytes.subarray(0, 5)), "%PDF-");
   assert.match(new TextDecoder("latin1").decode(bytes), /\/Subtype \/Image/);
+});
+
+test("topic image grows the chip and is embedded in svg", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.equal(sniffImageMime(png), "image/png");
+  assert.equal(sniffImageMime(new Uint8Array([0xff, 0xd8, 0xff, 0x00])), "image/jpeg");
+  const webp = new Uint8Array(12);
+  webp.set([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  assert.equal(sniffImageMime(webp), "image/webp");
+  assert.equal(sniffImageMime(new TextEncoder().encode("<svg xmlns='http://www.w3.org/2000/svg'/>")), "image/svg+xml");
+  assert.equal(sniffImageMime(new TextEncoder().encode("<?xml version='1.0'?><svg></svg>")), "image/svg+xml");
+  assert.equal(sniffImageMime(new TextEncoder().encode("not an image")), null);
+  assert.deepEqual(fittedSize(1, 1), { width: 64, height: 64 });
+  assert.deepEqual(fittedSize(800, 400), { width: 160, height: 80 });
+
+  const plain = topic("r", "Root", [topic("a", "Alpha")]);
+  const imaged = topic("r", "Root", [topic("a", "Alpha")]);
+  const alpha = imaged.children!.attached![0]!;
+  setTopicImage(alpha, { src: "xap:resources/abc", width: 64, height: 40, align: "bottom" });
+  assert.equal(alpha.image?.align, "bottom");
+  setTopicImage(alpha, null);
+  assert.equal(alpha.image, undefined);
+  setTopicImage(alpha, { src: "xap:resources/abc", width: 64, height: 40, align: "bottom" });
+  const before = layoutMap(plain, "org.xmind.ui.logic.right");
+  const after = layoutMap(imaged, "org.xmind.ui.logic.right");
+  const plainNode = before.nodes.find((node) => node.id === "a");
+  const imageNode = after.nodes.find((node) => node.id === "a");
+  assert.ok(plainNode && imageNode);
+  assert.equal(imageNode.imageW, 64);
+  assert.equal(imageNode.imageH, 40);
+  assert.ok(imageNode.h > plainNode.h);
+  assert.equal(plainNode.imageH, 0);
+  const svg = sceneToSvg(after, { rootTopic: imaged }, resolveTheme(undefined), new Map([["a", "data:image/png;base64,aaaa"]]));
+  assert.match(svg, /<image href="data:image\/png;base64,aaaa"/);
+  assert.match(svg, /width="64"/);
+  assert.match(svg, /height="40"/);
+  const bare = sceneToSvg(after, { rootTopic: imaged }, resolveTheme(undefined));
+  assert.equal(bare.includes("<image"), false);
+
+  const srcOnly = topic("r", "Root", [topic("b", "Beta")]);
+  srcOnly.children!.attached![0]!.image = { src: "xap:resources/only" };
+  assert.equal(layoutMap(srcOnly).nodes.find((node) => node.id === "b")?.imageW, 64);
+  const external = topic("r", "Root", [topic("c", "Gamma")]);
+  external.children!.attached![0]!.image = { src: "https://example.com/a.png", width: 80, height: 80 };
+  assert.equal(layoutMap(external).nodes.find((node) => node.id === "c")?.imageH, 0);
 });

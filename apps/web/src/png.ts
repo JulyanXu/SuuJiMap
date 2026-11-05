@@ -1,5 +1,5 @@
 import type { Sheet } from "xmind-workbook";
-import { edgePath, relationshipCurve, type Scene } from "./layout.ts";
+import { edgePath, relationshipCurve, topicImageBlock, topicImageOrigin, type Scene } from "./layout.ts";
 import { pdfFromRgb } from "./pdf.ts";
 import { chipFill, resolveTheme, type ResolvedTheme } from "./theme.ts";
 
@@ -12,7 +12,12 @@ function dash(pattern: string): number[] {
   return pattern ? pattern.split(" ").map((part) => Number(part)) : [];
 }
 
-export function renderSceneCanvas(scene: Scene, sheet: Sheet, theme: ResolvedTheme = resolveTheme(sheet.theme)): HTMLCanvasElement {
+export function renderSceneCanvas(
+  scene: Scene,
+  sheet: Sheet,
+  theme: ResolvedTheme = resolveTheme(sheet.theme),
+  images?: ReadonlyMap<string, CanvasImageSource>,
+): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   const maxEdge = 4096;
   const scale = Math.min(2, maxEdge / Math.max(scene.width, scene.height, 1));
@@ -101,15 +106,18 @@ export function renderSceneCanvas(scene: Scene, sheet: Sheet, theme: ResolvedThe
       ctx.lineWidth = paint.borderWidth;
       ctx.stroke();
     }
+    const picture = images?.get(node.id);
+    const origin = topicImageOrigin(node);
+    if (picture && origin) ctx.drawImage(picture, origin.x, origin.y, node.imageW, node.imageH);
     ctx.fillStyle = paint.text;
     ctx.font = `${paint.fontWeight} ${paint.fontSize}px ${paint.fontFamily}`;
     const line = (node.title.trim() ? node.title : "Untitled").split("\n")[0] ?? "";
-    const titleY = node.labels.length > 0 ? node.y + 8 + paint.fontSize : node.y + node.h / 2 + paint.fontSize * 0.3;
+    const titleY = node.labels.length > 0 || node.imageH > 0 ? node.y + 8 + paint.fontSize : node.y + node.h / 2 + paint.fontSize * 0.3;
     ctx.fillText(line, node.x + 12, titleY);
     if (node.labels.length > 0) {
       ctx.font = `500 9px ${paint.fontFamily}`;
       let labelX = node.x + 10;
-      const labelY = node.y + node.h - 5;
+      const labelY = node.y + node.h - topicImageBlock(node) - 5;
       for (const label of node.labels) {
         const width = ctx.measureText(label).width + 8;
         if (labelX + width > node.x + node.w - 4) break;
@@ -126,15 +134,34 @@ export function renderSceneCanvas(scene: Scene, sheet: Sheet, theme: ResolvedThe
   return canvas;
 }
 
-export async function sceneToPng(scene: Scene, sheet: Sheet, theme?: ResolvedTheme): Promise<Blob> {
-  const canvas = renderSceneCanvas(scene, sheet, theme);
+async function decodeImages(images?: ReadonlyMap<string, string>): Promise<Map<string, HTMLImageElement>> {
+  const loaded = new Map<string, HTMLImageElement>();
+  if (!images || images.size === 0) return loaded;
+  await Promise.all(
+    [...images.entries()].map(async ([id, src]) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.src = src;
+      try {
+        await img.decode();
+        loaded.set(id, img);
+      } catch {
+        // A broken resource leaves the chip text in place.
+      }
+    }),
+  );
+  return loaded;
+}
+
+export async function sceneToPng(scene: Scene, sheet: Sheet, theme?: ResolvedTheme, images?: ReadonlyMap<string, string>): Promise<Blob> {
+  const canvas = renderSceneCanvas(scene, sheet, theme, await decodeImages(images));
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((value) => resolve(value), "image/png"));
   if (!blob) throw new Error("Could not export PNG");
   return blob;
 }
 
-export async function sceneToPdf(scene: Scene, sheet: Sheet, theme?: ResolvedTheme): Promise<Blob> {
-  const canvas = renderSceneCanvas(scene, sheet, theme);
+export async function sceneToPdf(scene: Scene, sheet: Sheet, theme?: ResolvedTheme, images?: ReadonlyMap<string, string>): Promise<Blob> {
+  const canvas = renderSceneCanvas(scene, sheet, theme, await decodeImages(images));
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas is not available");
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);

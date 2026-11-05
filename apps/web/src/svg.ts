@@ -1,5 +1,5 @@
 import type { Sheet } from "xmind-workbook";
-import { edgePath, relationshipCurve, type MapNode, type Scene } from "./layout.ts";
+import { edgePath, relationshipCurve, topicImageBlock, topicImageOrigin, type MapNode, type Scene } from "./layout.ts";
 import { chipFill, resolveTheme, type ResolvedTheme, type TopicPaint } from "./theme.ts";
 
 function escapeXml(value: string): string {
@@ -18,7 +18,7 @@ function labelMarks(node: MapNode, paint: TopicPaint): string[] {
   if (node.labels.length === 0) return [];
   const parts: string[] = [];
   let x = node.x + 10;
-  const y = node.y + node.h - 5;
+  const y = node.y + node.h - topicImageBlock(node) - 5;
   for (const label of node.labels) {
     const w = Math.max(16, Array.from(label).length * 5.6 + 10);
     if (x + w > node.x + node.w - 6) break;
@@ -31,8 +31,13 @@ function labelMarks(node: MapNode, paint: TopicPaint): string[] {
   return parts;
 }
 
-/** Vector export of the current scene. Fonts are the resolved open stack (NeverMind → Inter). */
-export function sceneToSvg(scene: Scene, sheet: Sheet, theme: ResolvedTheme = resolveTheme(sheet.theme)): string {
+/** Vector export of the current scene. Fonts are the resolved open stack (NeverMind → Inter). `images` maps topic id to a data URL. */
+export function sceneToSvg(
+  scene: Scene,
+  sheet: Sheet,
+  theme: ResolvedTheme = resolveTheme(sheet.theme),
+  images?: ReadonlyMap<string, string>,
+): string {
   const boundary = theme.boundary();
   const summary = theme.summaryLine();
   const relationship = theme.relationship();
@@ -101,6 +106,13 @@ export function sceneToSvg(scene: Scene, sheet: Sheet, theme: ResolvedTheme = re
     parts.push(
       `<rect x="${num(node.x)}" y="${num(node.y)}" width="${num(node.w)}" height="${num(node.h)}" rx="${num(radius)}" fill="${escapeXml(fill)}" stroke="${escapeXml(paint.border)}" stroke-width="${num(paint.borderWidth)}"/>`,
     );
+    const href = images?.get(node.id);
+    const origin = topicImageOrigin(node);
+    if (href && origin) {
+      parts.push(
+        `<image href="${escapeXml(href)}" x="${num(origin.x)}" y="${num(origin.y)}" width="${num(node.imageW)}" height="${num(node.imageH)}"/>`,
+      );
+    }
     const lines = (node.title.trim() ? node.title : "Untitled").split("\n");
     lines.forEach((line, index) => {
       const y = node.y + 8 + paint.fontSize + index * (paint.fontSize + 2);
