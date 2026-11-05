@@ -1,9 +1,10 @@
 import type { Topic } from "xmind-workbook";
 import { resolveStructure, type StructureId } from "./structures.ts";
+import { resolveTheme, type ResolvedTheme, type ThemeKind } from "./theme.ts";
 import { isFolded } from "./tree.ts";
 
 export type Side = "left" | "right" | "up" | "down" | "center";
-export type NodeKind = "central" | "main" | "sub" | "floating" | "summary" | "callout";
+export type NodeKind = ThemeKind;
 
 export interface MapNode {
   id: string;
@@ -17,6 +18,8 @@ export interface MapNode {
   kind: NodeKind;
   folded: boolean;
   hasChildren: boolean;
+  branchIndex: number;
+  lineClass: "curve" | "roundedElbow";
 }
 
 export interface Bounds {
@@ -51,26 +54,42 @@ interface RawNode {
   children: RawNode[];
   folded: boolean;
   hasChildren: boolean;
+  branchIndex: number;
 }
 
 const H_GAP = 72;
-const V_GAP = 20;
+const V_GAP = 22;
 
-function measure(title: string, root: boolean): { w: number; h: number } {
+function measure(title: string, fontPx: number, root: boolean): { w: number; h: number } {
   const lines = (title || " ").split("\n");
   const longest = Math.max(...lines.map((line) => Array.from(line).length), 1);
-  const w = Math.min(300, Math.max(root ? 156 : 112, Math.round(longest * 8.4 + 48)));
-  const h = Math.max(root ? 52 : 40, lines.length * 18 + (root ? 22 : 16));
+  const char = Math.max(7, fontPx * 0.56);
+  const w = Math.min(460, Math.max(root ? 168 : 112, Math.round(longest * char + fontPx * 1.4)));
+  const h = Math.max(36, lines.length * (fontPx * 1.25) + 16);
   return { w, h };
 }
 
-function shape(topic: Topic, path: string, root: boolean): RawNode {
+function shape(topic: Topic, path: string, kind: NodeKind, branchIndex: number, resolved: ResolvedTheme): RawNode {
   const id = topic.id && topic.id.trim() !== "" ? topic.id : path;
   const title = topic.title ?? "";
-  const size = measure(title, root);
+  const paint = resolved.topic(kind, Math.max(0, branchIndex), topic.style?.properties);
+  const size = measure(title, paint.fontSize, kind === "central");
   const attached = topic.children?.attached ?? [];
-  const children = isFolded(topic) ? [] : attached.map((child, index) => shape(child, `${path}/${index}`, false));
-  return { id, title, w: size.w, h: size.h, children, folded: isFolded(topic), hasChildren: attached.length > 0 };
+  const children = isFolded(topic)
+    ? []
+    : attached.map((child, index) =>
+        shape(child, `${path}/${index}`, kind === "central" ? "main" : "sub", kind === "central" ? index : branchIndex, resolved),
+      );
+  return {
+    id,
+    title,
+    w: size.w,
+    h: size.h,
+    children,
+    folded: isFolded(topic),
+    hasChildren: attached.length > 0,
+    branchIndex: kind === "central" ? -1 : branchIndex,
+  };
 }
 
 function box(node: RawNode, parentId: string | null, x: number, y: number, side: Side, kind: NodeKind): MapNode {
@@ -86,6 +105,8 @@ function box(node: RawNode, parentId: string | null, x: number, y: number, side:
     kind,
     folded: node.folded,
     hasChildren: node.hasChildren,
+    branchIndex: node.branchIndex,
+    lineClass: "curve",
   };
 }
 
@@ -109,11 +130,7 @@ function layoutHorizontal(root: RawNode, sideName: "left" | "right"): MapNode[] 
     const height = Math.max(node.h, childrenHeight);
     const shift = (height - childrenHeight) / 2;
     if (shift !== 0) {
-      for (let i = 0; i < node.children.length; i += 1) {
-        const child = node.children[i];
-        if (!child) continue;
-        shiftSubtree(nodes, child.id, shift);
-      }
+      for (const child of node.children) shiftSubtree(nodes, child.id, shift);
     }
     nodes.push(box(node, parentId, x, top + (height - node.h) / 2, sideName, kind));
     return height;
@@ -164,11 +181,7 @@ function splitMap(root: RawNode, balanced: boolean): MapNode[] {
   });
   const rightNodes = layoutForest(right, root, "right");
   const leftNodes = layoutForest(left, root, "left");
-  return [
-    ...rightNodes,
-    ...leftNodes,
-    box(root, null, -root.w / 2, -root.h / 2, "center", "central"),
-  ];
+  return [...rightNodes, ...leftNodes, box(root, null, -root.w / 2, -root.h / 2, "center", "central")];
 }
 
 function layoutForest(children: RawNode[], root: RawNode, sideName: "left" | "right"): MapNode[] {
@@ -214,6 +227,71 @@ function reflectUp(nodes: MapNode[], rootId: string): void {
   }
 }
 
+/**
+ * Main topics sit on a circle. direction +1 walks clockwise from the top
+ * (screen y grows downward). Subtopics continue outward in the same turn.
+ * No published angle table was measured; this is a geometric reading of the structure class.
+ */
+function layoutRadial(root: RawNode, direction: 1 | -1): MapNode[] {
+  const nodes: MapNode[] = [];
+  const rootNode = box(root, null, -root.w / 2, -root.h / 2, "center", "central");
+  nodes.push(rootNode);
+  const count = root.children.length;
+  if (count === 0) return nodes;
+  const sector = (Math.PI * 2) / count;
+
+  function ring(node: RawNode, parent: MapNode, angle: number, span: number, kind: NodeKind) {
+    const parentCx = parent.x + parent.w / 2;
+    const parentCy = parent.y + parent.h / 2;
+    const parentRadius = Math.hypot(parentCx, parentCy);
+    const parentReach = Math.hypot(parent.w, parent.h) / 2;
+    const selfReach = Math.hypot(node.w, node.h) / 2;
+    const chord = Math.max(node.w, node.h) + V_GAP;
+    let radius = parentRadius + parentReach + selfReach + H_GAP;
+    const minRadius = chord / Math.max(span, 0.35);
+    if (radius < minRadius) radius = minRadius;
+    const x = Math.cos(angle) * radius - node.w / 2;
+    const y = Math.sin(angle) * radius - node.h / 2;
+    const side: Side = Math.cos(angle) >= 0 ? "right" : "left";
+    const placed = box(node, parent.id, x, y, side, kind);
+    nodes.push(placed);
+    const kids = node.children.length;
+    if (kids === 0) return;
+    const childSpan = Math.min(span, Math.PI * 0.9) / kids;
+    const childSweep = childSpan * kids;
+    node.children.forEach((child, index) => {
+      const childAngle = angle + direction * (-childSweep / 2 + childSpan * (index + 0.5));
+      ring(child, placed, childAngle, childSpan * 0.92, "sub");
+    });
+  }
+
+  root.children.forEach((child, index) => {
+    const angle = -Math.PI / 2 + direction * sector * (index + 0.5);
+    ring(child, rootNode, angle, Math.min(sector * 0.92, Math.PI * 0.9), "main");
+  });
+  return nodes;
+}
+
+function placeDetached(raw: RawNode, anchorX: number, anchorY: number, parentId: string): MapNode[] {
+  const laid = layoutHorizontal(raw, "right");
+  const self = laid.find((node) => node.id === raw.id);
+  if (!self) return [];
+  const dx = anchorX - self.x;
+  const dy = anchorY - self.y;
+  for (const node of laid) {
+    node.x += dx;
+    node.y += dy;
+    if (node.id === raw.id) {
+      node.kind = "floating";
+      node.parentId = parentId;
+      node.side = "right";
+    } else if (node.kind === "main") {
+      node.kind = "sub";
+    }
+  }
+  return laid;
+}
+
 function parseSpan(range: string | undefined, count: number): number[] {
   if (!range || range === "master") return Array.from({ length: count }, (_, index) => index);
   const match = /^\((\d+),(\d+)\)$/.exec(range);
@@ -242,9 +320,10 @@ function shiftAll(nodes: MapNode[], dx: number, dy: number): void {
   }
 }
 
-export function layoutMap(rootTopic: Topic, structureClass?: string): Scene {
+export function layoutMap(rootTopic: Topic, structureClass?: string, theme?: Record<string, unknown>): Scene {
   const structure = resolveStructure(structureClass ?? rootTopic.structureClass);
-  const root = shape(rootTopic, "root", true);
+  const resolved = resolveTheme(theme);
+  const root = shape(rootTopic, "root", "central", -1, resolved);
   let nodes: MapNode[] = [];
   if (structure === "org.xmind.ui.org-chart.down" || structure === "org.xmind.ui.org-chart.up") {
     nodes = layoutDown(root);
@@ -253,6 +332,10 @@ export function layoutMap(rootTopic: Topic, structureClass?: string): Scene {
     nodes = layoutHorizontal(root, "left");
   } else if (structure === "org.xmind.ui.logic.right" || structure === "org.xmind.ui.tree.right") {
     nodes = layoutHorizontal(root, "right");
+  } else if (structure === "org.xmind.ui.map.clockwise") {
+    nodes = layoutRadial(root, 1);
+  } else if (structure === "org.xmind.ui.map.anticlockwise") {
+    nodes = layoutRadial(root, -1);
   } else {
     nodes = splitMap(root, structure === "org.xmind.ui.map");
   }
@@ -260,20 +343,26 @@ export function layoutMap(rootTopic: Topic, structureClass?: string): Scene {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const rootNode = byId.get(root.id);
   const floaters = rootTopic.children?.detached ?? [];
-  floaters.forEach((topic, index) => {
-    if (!rootNode) return;
-    const raw = shape(topic, `float/${index}`, false);
-    const x = rootNode.x + rootNode.w + 48 + (topic.position?.x ?? index * 16);
-    const y = rootNode.y + rootNode.h + 28 + (topic.position?.y ?? index * (raw.h + 12));
-    nodes.push({ ...box(raw, root.id, x, y, "right", "floating"), folded: raw.folded, hasChildren: raw.hasChildren });
-  });
+  if (rootNode) {
+    floaters.forEach((topic, index) => {
+      const raw = shape(topic, `float/${index}`, "floating", 0, resolved);
+      const x = rootNode.x + rootNode.w + 48 + (topic.position?.x ?? index * 16);
+      const y = rootNode.y + rootNode.h + 28 + (topic.position?.y ?? index * (raw.h + 12));
+      for (const node of placeDetached(raw, x, y, root.id)) {
+        nodes.push(node);
+        byId.set(node.id, node);
+      }
+    });
+  }
 
   for (const node of [...nodes]) {
     const host = topicNode(rootTopic, node.id);
     if (!host || isFolded(host)) continue;
     (host.children?.callout ?? []).forEach((topic, index) => {
-      const raw = shape(topic, `callout/${node.id}/${index}`, false);
-      nodes.push(box(raw, node.id, node.x + node.w - 12, node.y - raw.h - 16 - index * (raw.h + 8), "up", "callout"));
+      const raw = shape(topic, `callout/${node.id}/${index}`, "callout", node.branchIndex, resolved);
+      const placed = box(raw, node.id, node.x + node.w - 12, node.y - raw.h - 16 - index * (raw.h + 8), "up", "callout");
+      nodes.push(placed);
+      byId.set(placed.id, placed);
     });
   }
 
@@ -300,13 +389,27 @@ export function layoutMap(rootTopic: Topic, structureClass?: string): Scene {
       const bounds = boundsOf(nodes, ids);
       const summaryTopic = topic.children?.summary?.find((item) => item.id === summary.topicId);
       if (!bounds || !summaryTopic) continue;
-      const raw = shape(summaryTopic, `summary/${summary.topicId}`, false);
-      const side = parentNode.side === "left" || nodes.find((node) => ids.has(node.id) && node.side === "left") ? "left" : parentNode.side === "up" ? "up" : parentNode.side === "down" || structure.startsWith("org.xmind.ui.org-chart") ? "down" : "right";
+      const raw = shape(summaryTopic, `summary/${summary.topicId}`, "summary", parentNode.branchIndex, resolved);
+      const side =
+        parentNode.side === "left" || nodes.find((node) => ids.has(node.id) && node.side === "left")
+          ? "left"
+          : parentNode.side === "up"
+            ? "up"
+            : parentNode.side === "down" || structure.startsWith("org.xmind.ui.org-chart")
+              ? "down"
+              : "right";
       const placed = placeOutside(raw, bounds, side, summary.topicId ?? raw.id);
       nodes.push(placed);
       byId.set(placed.id, placed);
       brackets.push({ id: summary.id ?? placed.id, d: bracketPath(bounds, side) });
     }
+  }
+
+  const treeStructure = structure === "org.xmind.ui.tree.right" || structure === "org.xmind.ui.tree.left";
+  for (const node of nodes) {
+    const host = topicNode(rootTopic, node.id);
+    const paint = resolved.topic(node.kind, Math.max(0, node.branchIndex), host?.style?.properties);
+    node.lineClass = treeStructure ? "roundedElbow" : paint.lineClass;
   }
 
   const minX = Math.min(...nodes.map((node) => node.x));
@@ -331,10 +434,10 @@ export function layoutMap(rootTopic: Topic, structureClass?: string): Scene {
       const bounds = boundsOf(nodes, ids);
       if (!bounds) continue;
       boundaries.push({
-        x: bounds.x - 14,
-        y: bounds.y - 14,
-        w: bounds.w + 28,
-        h: bounds.h + 28,
+        x: bounds.x - 16,
+        y: bounds.y - 18,
+        w: bounds.w + 32,
+        h: bounds.h + 32,
         title: boundary.title,
       });
     }
@@ -394,8 +497,40 @@ function topicNode(root: Topic, id: string): Topic | null {
   return null;
 }
 
+function borderPoint(node: MapNode, towardX: number, towardY: number): { x: number; y: number } {
+  const cx = node.x + node.w / 2;
+  const cy = node.y + node.h / 2;
+  const dx = towardX - cx;
+  const dy = towardY - cy;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const tx = ux === 0 ? Number.POSITIVE_INFINITY : node.w / 2 / Math.abs(ux);
+  const ty = uy === 0 ? Number.POSITIVE_INFINITY : node.h / 2 / Math.abs(uy);
+  const t = Math.min(tx, ty);
+  return { x: cx + ux * t, y: cy + uy * t };
+}
+
+function radialEdge(parent: MapNode, child: MapNode): string {
+  const parentCx = parent.x + parent.w / 2;
+  const parentCy = parent.y + parent.h / 2;
+  const childCx = child.x + child.w / 2;
+  const childCy = child.y + child.h / 2;
+  const start = borderPoint(parent, childCx, childCy);
+  const end = borderPoint(child, parentCx, parentCy);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const midX = (start.x + end.x) / 2 - (dy / len) * 16;
+  const midY = (start.y + end.y) / 2 + (dx / len) * 16;
+  return `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`;
+}
+
 export function edgePath(parent: MapNode, child: MapNode, structure: StructureId): string {
-  const tree = structure === "org.xmind.ui.tree.right" || structure === "org.xmind.ui.tree.left";
+  if (structure === "org.xmind.ui.map.clockwise" || structure === "org.xmind.ui.map.anticlockwise") {
+    return radialEdge(parent, child);
+  }
+  const tree = structure === "org.xmind.ui.tree.right" || structure === "org.xmind.ui.tree.left" || child.lineClass === "roundedElbow";
   if (child.side === "down" || child.side === "up") {
     const fromX = parent.x + parent.w / 2;
     const fromY = child.side === "down" ? parent.y + parent.h : parent.y;

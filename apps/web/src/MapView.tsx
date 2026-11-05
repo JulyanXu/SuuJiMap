@@ -1,12 +1,13 @@
-import type { Sheet } from "xmind-workbook";
+import type { Sheet, Topic } from "xmind-workbook";
+import { ChevronDown, ChevronRight, Link } from "lucide-react";
 import { edgePath, relationshipCurve, type MapNode, type Scene } from "./layout.ts";
 import { MarkerGlyph } from "./markers.tsx";
-import type { Topic } from "xmind-workbook";
-import { ChevronDown, ChevronRight, Link } from "lucide-react";
+import type { ResolvedTheme } from "./theme.ts";
 
 export function MapView({
   scene,
   sheet,
+  theme,
   topics,
   selectedId,
   editingId,
@@ -24,6 +25,7 @@ export function MapView({
 }: {
   scene: Scene;
   sheet: Sheet;
+  theme: ResolvedTheme;
   topics: Map<string, Topic>;
   selectedId: string | null;
   editingId: string | null;
@@ -40,14 +42,34 @@ export function MapView({
   onDrop: (id: string, mode: "before" | "after" | "child") => void;
 }) {
   const byId = new Map(scene.nodes.map((node) => [node.id, node]));
+  const boundaryPaint = theme.boundary();
+  const summaryPaint = theme.summaryLine();
+  const relationshipPaint = theme.relationship();
   return (
-    <div className="relative" style={{ width: scene.width, height: scene.height }}>
+    <div className="relative" style={{ width: scene.width, height: scene.height, background: theme.canvas }}>
       <svg className="absolute inset-0" width={scene.width} height={scene.height} aria-hidden="true">
+        {relationshipPaint.arrow && (
+          <defs>
+            <marker id="rel-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={relationshipPaint.color} />
+            </marker>
+          </defs>
+        )}
         {scene.boundaries.map((boundary, index) => (
           <g key={`b-${index}`}>
-            <rect x={boundary.x} y={boundary.y} width={boundary.w} height={boundary.h} rx="12" fill="none" stroke="#71717a" strokeDasharray="5 4" />
+            <rect
+              x={boundary.x}
+              y={boundary.y}
+              width={boundary.w}
+              height={boundary.h}
+              rx="12"
+              fill="none"
+              stroke={boundaryPaint.color}
+              strokeWidth={boundaryPaint.width}
+              strokeDasharray={boundaryPaint.dash || undefined}
+            />
             {boundary.title && (
-              <text x={boundary.x + 8} y={boundary.y + 14} fill="#3f3f46" fontSize="12">
+              <text x={boundary.x + 8} y={boundary.y + 14} fill={boundaryPaint.text} fontSize={boundaryPaint.fontSize} fontFamily={boundaryPaint.fontFamily}>
                 {boundary.title}
               </text>
             )}
@@ -57,10 +79,20 @@ export function MapView({
           if (!node.parentId || node.kind === "summary" || node.kind === "floating" || node.kind === "callout") return null;
           const parent = byId.get(node.parentId);
           if (!parent) return null;
-          return <path key={`e-${node.id}`} d={edgePath(parent, node, scene.structure)} fill="none" stroke="#a1a1aa" strokeWidth="1.5" />;
+          const paint = theme.topic(node.kind, Math.max(0, node.branchIndex));
+          return (
+            <path
+              key={`e-${node.id}`}
+              d={edgePath(parent, node, scene.structure)}
+              fill="none"
+              stroke={paint.lineColor}
+              strokeWidth={paint.lineWidth}
+              strokeDasharray={paint.lineDash || undefined}
+            />
+          );
         })}
         {scene.brackets.map((bracket) => (
-          <path key={bracket.id} d={bracket.d} fill="none" stroke="#52525b" strokeWidth="1.5" />
+          <path key={bracket.id} d={bracket.d} fill="none" stroke={summaryPaint.color} strokeWidth={summaryPaint.width} strokeDasharray={summaryPaint.dash || undefined} />
         ))}
         {(sheet.relationships ?? []).map((relationship) => {
           if (!relationship.end1Id || !relationship.end2Id) return null;
@@ -68,13 +100,20 @@ export function MapView({
           const to = byId.get(relationship.end2Id);
           if (!from || !to) return null;
           const curve = relationshipCurve(from, to, relationship.title, relationship.id ?? `${relationship.end1Id}-${relationship.end2Id}`);
-          const labelX = (from.x + to.x) / 2;
-          const labelY = (from.y + to.y) / 2 - 10;
+          const labelX = (from.x + from.w / 2 + to.x + to.w / 2) / 2;
+          const labelY = (from.y + from.h / 2 + to.y + to.h / 2) / 2 - 10;
           return (
             <g key={curve.id}>
-              <path d={curve.d} fill="none" stroke="#3f3f46" strokeWidth="1.5" strokeDasharray="4 3" />
+              <path
+                d={curve.d}
+                fill="none"
+                stroke={relationshipPaint.color}
+                strokeWidth={relationshipPaint.width}
+                strokeDasharray={relationshipPaint.dash || undefined}
+                markerEnd={relationshipPaint.arrow ? "url(#rel-arrow)" : undefined}
+              />
               {curve.title && (
-                <text x={labelX} y={labelY} fill="#3f3f46" fontSize="12" textAnchor="middle">
+                <text x={labelX} y={labelY} fill={relationshipPaint.text} fontSize={relationshipPaint.fontSize} fontFamily={relationshipPaint.fontFamily} textAnchor="middle">
                   {curve.title}
                 </text>
               )}
@@ -87,6 +126,7 @@ export function MapView({
           key={node.id}
           node={node}
           topic={topics.get(node.id)}
+          theme={theme}
           selected={node.id === selectedId}
           editing={node.id === editingId}
           draft={draft}
@@ -109,6 +149,7 @@ export function MapView({
 function TopicNode({
   node,
   topic,
+  theme,
   selected,
   editing,
   draft,
@@ -125,6 +166,7 @@ function TopicNode({
 }: {
   node: MapNode;
   topic: Topic | undefined;
+  theme: ResolvedTheme;
   selected: boolean;
   editing: boolean;
   draft: string;
@@ -140,17 +182,20 @@ function TopicNode({
   onDrop: (mode: "before" | "after" | "child") => void;
 }) {
   const label = node.title.trim() ? node.title : "Untitled";
-  const face =
-    node.kind === "central"
-      ? "bg-zinc-900 text-zinc-50"
-      : node.kind === "floating"
-        ? "border border-dashed border-zinc-400 bg-zinc-100 text-zinc-900"
-        : node.kind === "summary"
-          ? "border border-zinc-400 bg-white text-zinc-900"
-          : node.kind === "callout"
-            ? "border border-zinc-300 bg-zinc-50 text-zinc-700"
-            : "border border-zinc-300 bg-white text-zinc-900";
+  const paint = theme.topic(node.kind, Math.max(0, node.branchIndex), topic?.style?.properties);
   const dropRing = dropMode === "child" ? "ring-2 ring-indigo-600" : dropMode === "before" ? "ring-2 ring-emerald-600 ring-offset-2" : dropMode === "after" ? "ring-2 ring-amber-600" : "";
+  const face = {
+    background: paint.fill === "transparent" ? "transparent" : paint.fill,
+    color: paint.text,
+    borderStyle: "solid",
+    borderWidth: paint.borderWidth,
+    borderColor: paint.border,
+    borderRadius: Math.min(paint.radius, node.h / 2),
+    fontFamily: paint.fontFamily,
+    fontSize: paint.fontSize,
+    fontWeight: paint.fontWeight,
+    textDecoration: paint.decoration,
+  } as const;
 
   return (
     <div
@@ -218,7 +263,8 @@ function TopicNode({
           type="button"
           draggable={node.kind !== "central"}
           title={label}
-          className={`flex h-full w-full items-center gap-1.5 overflow-hidden rounded-lg px-3 text-left text-sm whitespace-pre leading-tight ${face} ${selected ? "outline-2 outline-offset-2 outline-indigo-600" : ""} ${dropRing}`}
+          className={`flex h-full w-full items-center gap-1.5 overflow-hidden px-3 text-left whitespace-pre leading-tight ${selected ? "outline-2 outline-offset-2 outline-indigo-600" : ""} ${dropRing}`}
+          style={face}
           onClick={(event) => {
             event.stopPropagation();
             onSelect();

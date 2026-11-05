@@ -92,3 +92,66 @@ test("png export is a real image", async ({ page }) => {
   const bytes = readFileSync((await download.path())!);
   expect(bytes.subarray(0, 4).toString("hex")).toBe("89504e47");
 });
+
+test("theme colors, svg and pdf export, and clockwise structure", async ({ page }) => {
+  const central = page.getByRole("button", { name: "xmind-mcp", exact: true });
+  await expect(central).toHaveCSS("background-color", "rgb(0, 2, 41)");
+  await expect(central).toHaveCSS("font-family", /Inter/);
+  await expect(page.getByRole("button", { name: "🛠️ 27 Tools", exact: true })).toHaveCSS("color", "rgb(249, 66, 58)");
+
+  const [svgDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "SVG", exact: true }).click(),
+  ]);
+  const svg = readFileSync((await svgDownload.path())!, "utf8");
+  expect(svg).toContain("<svg");
+  expect(svg).toContain("xmind-mcp");
+  expect(svg).not.toContain("NeverMind");
+
+  const [pdfDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "PDF", exact: true }).click(),
+  ]);
+  const pdf = readFileSync((await pdfDownload.path())!);
+  expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+
+  await page.getByLabel("Structure").selectOption("org.xmind.ui.map.clockwise");
+  await expect(page.getByTestId("map")).toHaveAttribute("data-structure", "org.xmind.ui.map.clockwise");
+});
+
+test("adds a parent, a floating topic, and a second sheet", async ({ page }) => {
+  await page.getByRole("button", { name: "MIT License", exact: true }).click();
+  await page.keyboard.press("Control+Enter");
+  await expect(page.getByRole("button", { name: "New topic", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Floating", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Floating topic", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add sheet", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Sheet 2" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("map")).toHaveAttribute("data-sheet-index", "1");
+  const second = page.getByRole("button", { name: "Central topic", exact: true });
+  await second.click();
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  const editor = page.getByRole("textbox", { name: "Rename Central topic" });
+  await editor.fill("Second sheet root");
+  await editor.press("Enter");
+
+  await page.getByRole("tab", { name: "xmind-mcp" }).click();
+  await expect(page.getByRole("button", { name: "xmind-mcp", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Second sheet root", exact: true })).toHaveCount(0);
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "Save", exact: true }).click(),
+  ]);
+  const book = readXMind(readFileSync((await download.path())!));
+  expect(book.sheets).toHaveLength(2);
+  expect(book.sheets[1]?.rootTopic.title).toBe("Second sheet root");
+  expect(book.sheets[1]?.theme && JSON.stringify(book.sheets[1].theme).includes("NeverMind")).toBe(false);
+  const project = book.sheets[0]?.rootTopic.children?.attached?.find((topic) => topic.title === "📋 Project");
+  const parent = project?.children?.attached?.find((topic) => topic.title === "New topic");
+  expect(parent?.children?.attached?.some((topic) => topic.title === "MIT License")).toBe(true);
+  expect(book.sheets[0]?.rootTopic.children?.detached?.some((topic) => topic.title === "Floating topic")).toBe(true);
+  expect(book.sheets[0]?.theme?.centralTopic && (book.sheets[0].theme.centralTopic as { properties?: Record<string, string> }).properties?.["fo:font-family"]).toBe("NeverMind");
+});

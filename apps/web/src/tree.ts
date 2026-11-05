@@ -104,6 +104,31 @@ function shiftRanges(topic: Topic, index: number, mode: "remove" | "insert"): vo
   apply(topic.summaries);
 }
 
+export function addParent(root: Topic, id: string): string | null {
+  if (root.id === id) return null;
+  const located = locate(root, id);
+  if (!located || located.key !== "attached" || !located.parent.children?.attached) return null;
+  const list = located.parent.children.attached;
+  const child = list[located.index];
+  if (!child) return null;
+  const newId = crypto.randomUUID();
+  list.splice(located.index, 1, { id: newId, title: "New topic", children: { attached: [child] } });
+  return newId;
+}
+
+export function addFloating(root: Topic): string {
+  const id = crypto.randomUUID();
+  if (!root.children) root.children = {};
+  if (!root.children.detached) root.children.detached = [];
+  const index = root.children.detached.length;
+  root.children.detached.push({
+    id,
+    title: "Floating topic",
+    position: { x: 48, y: 40 + index * 56 },
+  });
+  return id;
+}
+
 export function addChild(root: Topic, parentId: string): string | null {
   const parent = findTopic(root, parentId);
   if (!parent) return null;

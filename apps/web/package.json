@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "tsc -b && node --experimental-strip-types --test test/*.test.ts && vite build && playwright test"
+    "test": "tsc -b && tsc -p tsconfig.unit.json && node --test dist-unit/test/*.test.js && vite build && playwright test"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

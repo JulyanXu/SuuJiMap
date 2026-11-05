@@ -1,28 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  FileCode,
   FileText,
   FolderOpen,
   Image as ImageIcon,
   ListTree,
+  Pin,
+  Plus,
+  Printer,
   Redo2,
   Save,
   Undo2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { readXMind, writeXMind, type Sheet, type Topic, type Workbook } from "xmind-workbook";
+import { defaultSheetTheme, readXMind, writeXMind, type Sheet, type Topic, type Workbook } from "xmind-workbook";
 import { Button } from "@/components/ui/button.tsx";
 import { Inspector } from "./Inspector.tsx";
 import { layoutMap } from "./layout.ts";
 import { MapView } from "./MapView.tsx";
 import { plainToRealHtml, toMarkdown, toOpml } from "./markdown.ts";
 import { Outliner } from "./Outliner.tsx";
-import { sceneToPng } from "./png.ts";
-import { STRUCTURES, themeFont } from "./structures.ts";
+import { sceneToPdf, sceneToPng } from "./png.ts";
+import { STRUCTURES } from "./structures.ts";
+import { sceneToSvg } from "./svg.ts";
+import { resolveTheme } from "./theme.ts";
 import {
   addChild,
+  addFloating,
   addLabel,
   addMasterBoundary,
+  addParent,
   addRelationship,
   addSibling,
   addSummary,
@@ -71,16 +79,28 @@ export default function App() {
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; mode: DropMode } | null>(null);
   const [epoch, setEpoch] = useState(0);
+  const [sheetIndex, setSheetIndex] = useState(0);
   const cancelEdit = useRef(false);
   const dragging = useRef<string | null>(null);
+  const sheetIndexRef = useRef(0);
 
   useEffect(() => {
     bookRef.current = workbook;
+    if (workbook && sheetIndexRef.current >= workbook.sheets.length) {
+      sheetIndexRef.current = 0;
+      setSheetIndex(0);
+      setSelectedId(workbook.sheets[0]?.rootTopic.id ?? null);
+    }
   }, [workbook]);
 
-  const sheet = workbook?.sheets[0];
+  useEffect(() => {
+    sheetIndexRef.current = sheetIndex;
+  }, [sheetIndex]);
+
+  const sheet = workbook?.sheets[sheetIndex] ?? workbook?.sheets[0];
   const root = sheet?.rootTopic;
-  const scene = useMemo(() => (root ? layoutMap(root, root.structureClass) : null), [root]);
+  const theme = useMemo(() => resolveTheme(sheet?.theme), [sheet]);
+  const scene = useMemo(() => (root ? layoutMap(root, root.structureClass, sheet?.theme) : null), [root, sheet?.theme]);
   const topics = useMemo(() => (root ? indexTopics(root) : new Map<string, Topic>()), [root]);
   const selected = selectedId ? topics.get(selectedId) ?? null : null;
 
@@ -95,17 +115,56 @@ export default function App() {
     setEpoch((value) => value + 1);
   }
 
-  function commit(fn: (sheet: Sheet) => void) {
+  function mutate(fn: (sheets: Sheet[]) => void) {
     const current = bookRef.current;
-    if (!current?.sheets[0]) return;
+    if (!current?.sheets.length) return;
     past.current.push(JSON.stringify(current.sheets));
     if (past.current.length > 60) past.current.shift();
     future.current = [];
     const sheets = JSON.parse(JSON.stringify(current.sheets)) as Sheet[];
-    const nextSheet = sheets[0];
-    if (!nextSheet) return;
-    fn(nextSheet);
+    fn(sheets);
     replaceBook({ ...current, sheets });
+  }
+
+  function commit(fn: (sheet: Sheet) => void) {
+    const index = sheetIndexRef.current;
+    mutate((sheets) => {
+      const nextSheet = sheets[index];
+      if (nextSheet) fn(nextSheet);
+    });
+  }
+
+  function selectSheet(index: number) {
+    const count = bookRef.current?.sheets.length ?? 0;
+    if (count === 0) return;
+    const next = Math.max(0, Math.min(index, count - 1));
+    sheetIndexRef.current = next;
+    setSheetIndex(next);
+    setSelectedId(bookRef.current?.sheets[next]?.rootTopic.id ?? null);
+    setEditingId(null);
+    setLinkFrom(null);
+  }
+
+  function addSheet() {
+    let nextIndex = 0;
+    mutate((sheets) => {
+      nextIndex = sheets.length;
+      const id = crypto.randomUUID();
+      sheets.push({
+        id,
+        class: "sheet",
+        title: `Sheet ${sheets.length + 1}`,
+        theme: defaultSheetTheme(),
+        rootTopic: {
+          id: crypto.randomUUID(),
+          class: "topic",
+          title: "Central topic",
+          structureClass: "org.xmind.ui.map.unbalanced",
+          children: { attached: [] },
+        },
+      });
+    });
+    selectSheet(nextIndex);
   }
 
   function undo() {
@@ -133,6 +192,8 @@ export default function App() {
       future.current = [];
       replaceBook(book);
       setFileName(name.toLowerCase().endsWith(".xmind") ? name : `${name}.xmind`);
+      sheetIndexRef.current = 0;
+      setSheetIndex(0);
       setSelectedId(book.sheets[0].rootTopic.id ?? null);
       setEditingId(null);
       setLinkFrom(null);
@@ -143,8 +204,15 @@ export default function App() {
     }
   }
 
+  function activeRoot(): Topic | null {
+    const book = bookRef.current;
+    if (!book) return null;
+    return book.sheets[sheetIndexRef.current]?.rootTopic ?? book.sheets[0]?.rootTopic ?? null;
+  }
+
   function beginEdit(id: string) {
-    const topic = bookRef.current ? findTopic(bookRef.current.sheets[0]?.rootTopic ?? { title: "" }, id) : null;
+    const rootTopic = activeRoot();
+    const topic = rootTopic ? findTopic(rootTopic, id) : null;
     if (!topic) return;
     setSelectedId(id);
     setDraft(topic.title ?? "");
@@ -199,10 +267,26 @@ export default function App() {
     saveBlob(new Blob([bytes as BlobPart], { type: "application/vnd.xmind.workbook" }), fileName);
   }
 
+  function exportName(extension: string): string {
+    return fileName.replace(/\.xmind$/i, "") + extension;
+  }
+
   async function exportPng() {
     if (!scene || !sheet) return;
-    const blob = await sceneToPng(scene, sheet);
-    saveBlob(blob, fileName.replace(/\.xmind$/i, "") + ".png");
+    const blob = await sceneToPng(scene, sheet, theme);
+    saveBlob(blob, exportName(".png"));
+  }
+
+  function exportSvg() {
+    if (!scene || !sheet) return;
+    const svg = sceneToSvg(scene, sheet, theme);
+    saveBlob(new Blob([svg], { type: "image/svg+xml" }), exportName(".svg"));
+  }
+
+  async function exportPdf() {
+    if (!scene || !sheet) return;
+    const blob = await sceneToPdf(scene, sheet, theme);
+    saveBlob(blob, exportName(".pdf"));
   }
 
   useEffect(() => {
@@ -232,9 +316,16 @@ export default function App() {
         return;
       }
       if (typing || !bookRef.current || !selectedId) return;
-      const rootTopic = bookRef.current.sheets[0]?.rootTopic;
+      const rootTopic = activeRoot();
       if (!rootTopic) return;
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (meta && event.key === "Enter") {
+        event.preventDefault();
+        let created: string | null = null;
+        commit((next) => {
+          created = addParent(next.rootTopic, selectedId);
+        });
+        if (created) setSelectedId(created);
+      } else if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         if (rootTopic.id === selectedId) return;
         let created: string | null = null;
@@ -279,14 +370,12 @@ export default function App() {
   });
 
   return (
-    <div className="flex h-full min-h-svh flex-col bg-zinc-100 text-zinc-900">
-      <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2">
+    <div className="flex h-full min-h-svh flex-col bg-[#f3eee4] text-[#241f1a]">
+      <header className="flex flex-wrap items-center gap-2 border-b border-[#e7e0d4] bg-[#fffdf8] px-3 py-2">
         <div className="mr-auto min-w-0">
           <p className="truncate text-sm font-semibold">Mind map</p>
           <p className="truncate text-xs text-zinc-500">
-            {sheet
-              ? `${sheet.title?.trim() || "Untitled sheet"} · ${fileName}${workbook && workbook.sheets.length > 1 ? ` · Sheet 1 of ${workbook.sheets.length}` : ""}`
-              : "Open a .xmind file"}
+            {sheet ? `${sheet.title?.trim() || "Untitled sheet"} · ${fileName}` : "Open a .xmind file"}
           </p>
         </div>
         <input
@@ -376,7 +465,48 @@ export default function App() {
         <Button variant="outline" size="sm" disabled={!scene || !sheet} onClick={() => void exportPng()}>
           <ImageIcon className="size-3.5" /> PNG
         </Button>
+        <Button variant="outline" size="sm" disabled={!scene || !sheet} onClick={exportSvg}>
+          <FileCode className="size-3.5" /> SVG
+        </Button>
+        <Button variant="outline" size="sm" disabled={!scene || !sheet} onClick={() => void exportPdf()}>
+          <Printer className="size-3.5" /> PDF
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!root}
+          onClick={() => {
+            let created: string | null = null;
+            commit((next) => {
+              created = addFloating(next.rootTopic);
+            });
+            if (created) setSelectedId(created);
+          }}
+        >
+          <Pin className="size-3.5" /> Floating
+        </Button>
       </header>
+      {workbook && sheet && (
+        <div className="flex items-center gap-1 border-b border-[#e7e0d4] bg-[#fffdf8] px-3 py-1">
+          <div role="tablist" aria-label="Sheets" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+            {workbook.sheets.map((item, index) => (
+              <button
+                key={item.id ?? index}
+                type="button"
+                role="tab"
+                aria-selected={index === sheetIndex}
+                className={`max-w-48 truncate rounded-md px-2.5 py-1 text-xs ${index === sheetIndex ? "bg-[#24211c] text-[#f6f1e7]" : "text-[#5c564c] hover:bg-[#efe8dc]"}`}
+                onClick={() => selectSheet(index)}
+              >
+                {item.title?.trim() || `Sheet ${index + 1}`}
+              </button>
+            ))}
+          </div>
+          <Button variant="ghost" size="sm" onClick={addSheet}>
+            <Plus className="size-3.5" /> Add sheet
+          </Button>
+        </div>
+      )}
       {error && (
         <p role="alert" className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
           {error}
@@ -388,8 +518,9 @@ export default function App() {
           ref={scrollerRef}
           data-testid="map"
           data-structure={root?.structureClass ?? "org.xmind.ui.map.unbalanced"}
-          className="relative min-h-0 flex-1 overflow-auto bg-zinc-100"
-          style={{ fontFamily: themeFont(sheet?.theme) }}
+          data-sheet-index={sheet ? sheetIndex : undefined}
+          className="relative min-h-0 flex-1 overflow-auto"
+          style={{ fontFamily: theme.topic("central", 0).fontFamily, background: scene ? theme.canvas : "#f3eee4" }}
           onPointerDown={(event) => {
             const target = event.target;
             if (!(target instanceof Element) || target.closest("[data-topic], button, input, textarea, select, a")) return;
@@ -443,6 +574,7 @@ export default function App() {
                 <MapView
                   scene={scene}
                   sheet={sheet!}
+                  theme={theme}
                   topics={topics}
                   selectedId={selectedId}
                   editingId={editingId}
