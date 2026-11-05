@@ -1,4 +1,4 @@
-import type { Topic } from "xmind-workbook";
+import { resourceZipPath, type Topic } from "xmind-workbook";
 import { resolveStructure, type StructureId } from "./structures.ts";
 import { resolveTheme, type ResolvedTheme, type ThemeKind } from "./theme.ts";
 import { isFolded } from "./tree.ts";
@@ -21,6 +21,9 @@ export interface MapNode {
   branchIndex: number;
   lineClass: "curve" | "roundedElbow";
   labels: string[];
+  /** Display size from topic.image. Zero when the topic has no xap:resources image. */
+  imageW: number;
+  imageH: number;
 }
 
 export interface Bounds {
@@ -57,10 +60,33 @@ interface RawNode {
   hasChildren: boolean;
   branchIndex: number;
   labels: string[];
+  imageW: number;
+  imageH: number;
 }
 
 const H_GAP = 72;
 const V_GAP = 22;
+const IMAGE_GAP = 6;
+
+/** Space reserved under the title for a topic image, including the gap above it. */
+export function topicImageBlock(node: { imageH: number }): number {
+  return node.imageH > 0 ? node.imageH + IMAGE_GAP : 0;
+}
+
+export function topicImageOrigin(node: { x: number; y: number; w: number; h: number; imageW: number; imageH: number }): { x: number; y: number } | null {
+  if (node.imageW <= 0 || node.imageH <= 0) return null;
+  return {
+    x: node.x + (node.w - node.imageW) / 2,
+    y: node.y + node.h - node.imageH - 4,
+  };
+}
+
+function topicImageBox(image: Topic["image"]): { w: number; h: number } | null {
+  if (!image || !resourceZipPath(image.src)) return null;
+  const w = typeof image.width === "number" && Number.isFinite(image.width) && image.width > 0 ? image.width : 64;
+  const h = typeof image.height === "number" && Number.isFinite(image.height) && image.height > 0 ? image.height : 64;
+  return { w, h };
+}
 
 function measure(title: string, fontPx: number, root: boolean, labels: string[]): { w: number; h: number } {
   const lines = (title || " ").split("\n");
@@ -82,6 +108,7 @@ function shape(topic: Topic, path: string, kind: NodeKind, branchIndex: number, 
   const labels = (topic.labels ?? []).map((label) => label.trim()).filter((label) => label.length > 0);
   const paint = resolved.topic(kind, Math.max(0, branchIndex), topic.style?.properties);
   const size = measure(title, paint.fontSize, kind === "central", labels);
+  const image = topicImageBox(topic.image);
   const attached = topic.children?.attached ?? [];
   const children = isFolded(topic)
     ? []
@@ -91,13 +118,15 @@ function shape(topic: Topic, path: string, kind: NodeKind, branchIndex: number, 
   return {
     id,
     title,
-    w: size.w,
-    h: size.h,
+    w: Math.max(size.w, image ? image.w + 24 : 0),
+    h: size.h + (image ? image.h + IMAGE_GAP : 0),
     children,
     folded: isFolded(topic),
     hasChildren: attached.length > 0,
     branchIndex: kind === "central" ? -1 : branchIndex,
     labels,
+    imageW: image?.w ?? 0,
+    imageH: image?.h ?? 0,
   };
 }
 
@@ -117,6 +146,8 @@ function box(node: RawNode, parentId: string | null, x: number, y: number, side:
     branchIndex: node.branchIndex,
     lineClass: "curve",
     labels: node.labels,
+    imageW: node.imageW,
+    imageH: node.imageH,
   };
 }
 

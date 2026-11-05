@@ -14,8 +14,9 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { defaultSheetTheme, readXMind, writeXMind, type Sheet, type Topic, type Workbook } from "xmind-workbook";
+import { defaultSheetTheme, readXMind, writeXMind, type Sheet, type Topic, type Workbook, type ZipMember } from "xmind-workbook";
 import { Button } from "@/components/ui/button.tsx";
+import { imageSignature, objectUrlsForWorkbook, readDisplaySize, sniffImageMime, topicImageHrefs } from "./images.ts";
 import { Inspector } from "./Inspector.tsx";
 import { layoutMap } from "./layout.ts";
 import { MapView } from "./MapView.tsx";
@@ -48,6 +49,7 @@ import {
   setHref,
   setNotes,
   setQuickStyle,
+  setTopicImage,
   toggleMarker,
 } from "./tree.ts";
 
@@ -80,6 +82,7 @@ export default function App() {
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; mode: DropMode } | null>(null);
   const [epoch, setEpoch] = useState(0);
+  const [imageUrls, setImageUrls] = useState<Map<string, string>>(() => new Map());
   const [sheetIndex, setSheetIndex] = useState(0);
   const cancelEdit = useRef(false);
   const dragging = useRef<string | null>(null);
@@ -97,6 +100,15 @@ export default function App() {
   useEffect(() => {
     sheetIndexRef.current = sheetIndex;
   }, [sheetIndex]);
+
+  const imageKey = useMemo(() => imageSignature(workbook), [workbook]);
+  useEffect(() => {
+    const next = objectUrlsForWorkbook(bookRef.current);
+    setImageUrls(next);
+    return () => {
+      for (const url of next.values()) URL.revokeObjectURL(url);
+    };
+  }, [imageKey]);
 
   const sheet = workbook?.sheets[sheetIndex] ?? workbook?.sheets[0];
   const root = sheet?.rootTopic;
@@ -116,7 +128,7 @@ export default function App() {
     setEpoch((value) => value + 1);
   }
 
-  function mutate(fn: (sheets: Sheet[]) => void) {
+  function mutate(fn: (sheets: Sheet[]) => void, extras?: ZipMember[]) {
     const current = bookRef.current;
     if (!current?.sheets.length) return;
     past.current.push(JSON.stringify(current.sheets));
@@ -124,7 +136,7 @@ export default function App() {
     future.current = [];
     const sheets = JSON.parse(JSON.stringify(current.sheets)) as Sheet[];
     fn(sheets);
-    replaceBook({ ...current, sheets });
+    replaceBook({ ...current, sheets, ...(extras ? { extras } : {}) });
   }
 
   function commit(fn: (sheet: Sheet) => void) {
@@ -272,22 +284,53 @@ export default function App() {
     return fileName.replace(/\.xmind$/i, "") + extension;
   }
 
+  function currentImageHrefs(): Map<string, string> {
+    return topicImageHrefs(bookRef.current);
+  }
+
   async function exportPng() {
     if (!scene || !sheet) return;
-    const blob = await sceneToPng(scene, sheet, theme);
+    const blob = await sceneToPng(scene, sheet, theme, currentImageHrefs());
     saveBlob(blob, exportName(".png"));
   }
 
   function exportSvg() {
     if (!scene || !sheet) return;
-    const svg = sceneToSvg(scene, sheet, theme);
+    const svg = sceneToSvg(scene, sheet, theme, currentImageHrefs());
     saveBlob(new Blob([svg], { type: "image/svg+xml" }), exportName(".svg"));
   }
 
   async function exportPdf() {
     if (!scene || !sheet) return;
-    const blob = await sceneToPdf(scene, sheet, theme);
+    const blob = await sceneToPdf(scene, sheet, theme, currentImageHrefs());
     saveBlob(blob, exportName(".pdf"));
+  }
+
+  async function attachImage(file: File) {
+    const id = selectedId;
+    const current = bookRef.current;
+    if (!id || !current) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const mime = sniffImageMime(bytes);
+    if (!mime) {
+      setError("Use a PNG, JPEG, WebP, or SVG image.");
+      return;
+    }
+    const sheetAt = sheetIndexRef.current;
+    const rootTopic = current.sheets[sheetAt]?.rootTopic;
+    const topic = rootTopic ? findTopic(rootTopic, id) : null;
+    if (!topic) return;
+    let resourceId = crypto.randomUUID();
+    while (resourceId === topic.id) resourceId = crypto.randomUUID();
+    const size = await readDisplaySize(bytes, mime);
+    setError(null);
+    const extras = [...(bookRef.current?.extras ?? []), { name: `resources/${resourceId}`, data: bytes }];
+    mutate((sheets) => {
+      const nextRoot = sheets[sheetAt]?.rootTopic;
+      const next = nextRoot ? findTopic(nextRoot, id) : null;
+      if (!next) return;
+      setTopicImage(next, { src: `xap:resources/${resourceId}`, width: size.width, height: size.height, align: "bottom" });
+    }, extras);
   }
 
   useEffect(() => {
@@ -581,6 +624,7 @@ export default function App() {
                   editingId={editingId}
                   draft={draft}
                   dropHint={dropHint}
+                  imageUrls={imageUrls}
                   onDraft={setDraft}
                   onSelect={onSelect}
                   onEdit={beginEdit}
@@ -656,6 +700,12 @@ export default function App() {
           onHref={(href) => selectedId && commit((next) => {
             const topic = findTopic(next.rootTopic, selectedId);
             if (topic) setHref(topic, href);
+          })}
+          imageUrl={selectedId ? imageUrls.get(selectedId) ?? null : null}
+          onAttachImage={(file) => void attachImage(file)}
+          onClearImage={() => selectedId && commit((next) => {
+            const topic = findTopic(next.rootTopic, selectedId);
+            if (topic) setTopicImage(topic, null);
           })}
           onBoundary={() => selectedId && commit((next) => {
             const topic = findTopic(next.rootTopic, selectedId);
