@@ -1,0 +1,16 @@
+{
+  "name": "xmind-workbook-workspace",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w xmind-workbook && npm run build -w web && npm run build -w @example/xmind-consumer",
+    "test": "npm run test -w xmind-workbook && npm run test -w @example/xmind-consumer && npm run test -w web",
+    "dev": "npm run build -w xmind-workbook && npm run dev -w web",
+    "roundtrip": "npm run roundtrip -w xmind-workbook"
+  }
+}
