@@ -28,7 +28,13 @@ export interface LinePaint {
   fontSize: number;
   fontFamily: string;
   arrow: boolean;
+  /** Region fill. "none" means stroke only. Boundary uses this; summary and relationship stay "none". */
+  fill: string;
 }
+
+/** Theme roles the quick-style picker can copy onto topic.style.properties. */
+export const QUICK_ROLES = ["importantTopic", "minorTopic", "expiredTopic"] as const;
+export type QuickRole = (typeof QUICK_ROLES)[number];
 
 export interface ResolvedTheme {
   canvas: string;
@@ -131,9 +137,12 @@ function dashOf(pattern: string | undefined): string {
 
 /**
  * `inherited` is not a computed color in the file.
- * Explicit hex wins. fill-pattern none plus a hex svg:fill paints text (measured summary topic).
+ * Explicit hex wins. A summary topic with fill-pattern none and a hex svg:fill paints that hex as text.
+ * Boundary svg:fill is not a label color: solid fill paints the region, and fo:color inherited
+ * does not fall back to that fill. A dark solid boundary title uses light type.
  * Inherited line/text color on a main or sub topic uses map multi-line-colors in attached order.
- * A solid dark shape with inherited text uses light type so the label stays readable.
+ * color-list is preserved on the theme and is not read here.
+ * A solid dark topic shape with inherited text uses light type so the label stays readable.
  */
 function paintRole(props: Record<string, string>, kind: ThemeKind, branchColor: string | null): TopicPaint {
   const svgFill = parseColor(props["svg:fill"]);
@@ -186,11 +195,60 @@ function paintLine(props: Record<string, string>, fallback: string): LinePaint {
     fontSize: parseSize(props["fo:font-size"]) ?? 12,
     fontFamily: displayFont(props["fo:font-family"]),
     arrow: (props["arrow-end-class"] ?? "").includes("triangle"),
+    fill: "none",
   };
+}
+
+/**
+ * Measured boundary is fill-pattern solid + svg:fill + fo:color inherited.
+ * The hex is the region fill. Inherited text does not reuse svg:fill as a label mask.
+ * A dark region gets light title type so the boundary title stays readable.
+ */
+function paintBoundary(props: Record<string, string>, fallback: string): LinePaint {
+  const line = paintLine(props, fallback);
+  const svgFill = parseColor(props["svg:fill"]);
+  const solid = props["fill-pattern"] === "solid" && svgFill != null;
+  const fill = solid && svgFill ? svgFill : "none";
+  const explicit = parseColor(props["fo:color"]);
+  let text = explicit ?? "";
+  if (!text && solid && svgFill && isDark(svgFill)) text = "#f8fafc";
+  if (!text) text = line.color;
+  return { ...line, fill, text };
+}
+
+/** A topic with no shape fill sits on the canvas color so a solid boundary behind it does not hide the title. */
+export function chipFill(fill: string, canvas: string): string {
+  return fill === "transparent" ? canvas : fill;
+}
+
+export function quickRoleProperties(theme: Record<string, unknown> | undefined, role: QuickRole): Record<string, string> {
+  return roleProps(sourceTheme(theme), role);
+}
+
+export function quickStyleKeys(theme: Record<string, unknown> | undefined): string[] {
+  const keys = new Set<string>();
+  for (const role of QUICK_ROLES) {
+    for (const key of Object.keys(quickRoleProperties(theme, role))) keys.add(key);
+  }
+  return [...keys];
+}
+
+export function activeQuickRole(
+  theme: Record<string, unknown> | undefined,
+  properties: Record<string, string> | undefined,
+): QuickRole | null {
+  if (!properties) return null;
+  for (const role of QUICK_ROLES) {
+    const bag = quickRoleProperties(theme, role);
+    const keys = Object.keys(bag);
+    if (keys.length > 0 && keys.every((key) => properties[key] === bag[key])) return role;
+  }
+  return null;
 }
 
 export function resolveTheme(theme: Record<string, unknown> | undefined): ResolvedTheme {
   const source = sourceTheme(theme);
+  // Branch color is multi-line-colors. color-list stays on the file and is not painted.
   const branchColors = colorsOf(roleProps(source, "map")["multi-line-colors"]);
   const canvas = parseColor(roleProps(source, "map")["svg:fill"]) ?? "#f7f4ee";
   return {
@@ -201,7 +259,7 @@ export function resolveTheme(theme: Record<string, unknown> | undefined): Resolv
       const branch = branched && branchColors.length > 0 ? branchColors[Math.abs(branchIndex) % branchColors.length] ?? null : null;
       return paintRole(props, kind, branch);
     },
-    boundary: () => paintLine(roleProps(source, "boundary"), "#71717a"),
+    boundary: () => paintBoundary(roleProps(source, "boundary"), "#71717a"),
     summaryLine: () => paintLine(roleProps(source, "summary"), "#52525b"),
     relationship: () => paintLine(roleProps(source, "relationship"), "#3f3f46"),
   };

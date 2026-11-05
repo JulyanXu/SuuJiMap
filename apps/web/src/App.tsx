@@ -24,7 +24,7 @@ import { Outliner } from "./Outliner.tsx";
 import { sceneToPdf, sceneToPng } from "./png.ts";
 import { STRUCTURES } from "./structures.ts";
 import { sceneToSvg } from "./svg.ts";
-import { resolveTheme } from "./theme.ts";
+import { quickRoleProperties, quickStyleKeys, resolveTheme, type QuickRole } from "./theme.ts";
 import {
   addChild,
   addFloating,
@@ -47,6 +47,7 @@ import {
   setFolded,
   setHref,
   setNotes,
+  setQuickStyle,
   toggleMarker,
 } from "./tree.ts";
 
@@ -513,7 +514,7 @@ export default function App() {
         </p>
       )}
       {linkFrom && <p className="border-b border-indigo-200 bg-indigo-50 px-4 py-1 text-xs text-indigo-900">Click another topic to relate it.</p>}
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <div
           ref={scrollerRef}
           data-testid="map"
@@ -629,10 +630,16 @@ export default function App() {
         <Inspector
           key={epoch}
           topic={selected}
+          sheetTheme={sheet?.theme}
           linking={linkFrom != null}
           onToggleMarker={(markerId) => selectedId && commit((next) => {
             const topic = findTopic(next.rootTopic, selectedId);
             if (topic) toggleMarker(topic, markerId);
+          })}
+          onQuickStyle={(role: QuickRole | null) => selectedId && commit((next) => {
+            const topic = findTopic(next.rootTopic, selectedId);
+            if (!topic) return;
+            setQuickStyle(topic, role ? quickRoleProperties(next.theme, role) : null, quickStyleKeys(next.theme));
           })}
           onAddLabel={(label) => selectedId && commit((next) => {
             const topic = findTopic(next.rootTopic, selectedId);

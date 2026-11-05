@@ -1,7 +1,7 @@
 import type { Sheet } from "xmind-workbook";
 import { edgePath, relationshipCurve, type Scene } from "./layout.ts";
 import { pdfFromRgb } from "./pdf.ts";
-import { resolveTheme, type ResolvedTheme } from "./theme.ts";
+import { chipFill, resolveTheme, type ResolvedTheme } from "./theme.ts";
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -33,6 +33,10 @@ export function renderSceneCanvas(scene: Scene, sheet: Sheet, theme: ResolvedThe
     ctx.strokeStyle = boundary.color;
     ctx.lineWidth = boundary.width;
     roundRect(ctx, item.x, item.y, item.w, item.h, 12);
+    if (boundary.fill !== "none") {
+      ctx.fillStyle = boundary.fill;
+      ctx.fill();
+    }
     ctx.stroke();
     ctx.restore();
     if (item.title) {
@@ -90,10 +94,8 @@ export function renderSceneCanvas(scene: Scene, sheet: Sheet, theme: ResolvedThe
     const paint = theme.topic(node.kind, Math.max(0, node.branchIndex));
     const radius = Math.min(paint.radius, node.h / 2);
     roundRect(ctx, node.x, node.y, node.w, node.h, radius);
-    if (paint.fill !== "transparent") {
-      ctx.fillStyle = paint.fill;
-      ctx.fill();
-    }
+    ctx.fillStyle = chipFill(paint.fill, theme.canvas);
+    ctx.fill();
     if (paint.borderWidth > 0) {
       ctx.strokeStyle = paint.border;
       ctx.lineWidth = paint.borderWidth;
@@ -102,7 +104,23 @@ export function renderSceneCanvas(scene: Scene, sheet: Sheet, theme: ResolvedThe
     ctx.fillStyle = paint.text;
     ctx.font = `${paint.fontWeight} ${paint.fontSize}px ${paint.fontFamily}`;
     const line = (node.title.trim() ? node.title : "Untitled").split("\n")[0] ?? "";
-    ctx.fillText(line, node.x + 12, node.y + node.h / 2 + paint.fontSize * 0.3);
+    const titleY = node.labels.length > 0 ? node.y + 8 + paint.fontSize : node.y + node.h / 2 + paint.fontSize * 0.3;
+    ctx.fillText(line, node.x + 12, titleY);
+    if (node.labels.length > 0) {
+      ctx.font = `500 9px ${paint.fontFamily}`;
+      let labelX = node.x + 10;
+      const labelY = node.y + node.h - 5;
+      for (const label of node.labels) {
+        const width = ctx.measureText(label).width + 8;
+        if (labelX + width > node.x + node.w - 4) break;
+        ctx.strokeStyle = paint.text;
+        ctx.lineWidth = 0.6;
+        roundRect(ctx, labelX, labelY - 10, width, 12, 6);
+        ctx.stroke();
+        ctx.fillText(label, labelX + 4, labelY - 1);
+        labelX += width + 4;
+      }
+    }
   }
 
   return canvas;

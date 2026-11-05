@@ -2,7 +2,14 @@
  * Original sheet theme written when a sheet has none.
  * Property keys and role names are the ones measured on content.json themes.
  * Values are this project's palette and open fonts. NeverMind is never written.
- * skeletonThemeId and colorThemeId are omitted: those strings identify a foreign theme pack.
+ *
+ * SDK theme packs omit skeletonThemeId and colorThemeId. Vana mab/example
+ * includes both (colorThemeId Rainbow-#000229-MULTI_LINE_COLORS). This palette
+ * is not that pack, so a fresh theme does not claim those ids. Imported themes
+ * are left unchanged, including those ids when the file already has them.
+ *
+ * Boundary stores the measured triple: fill-pattern solid, svg:fill #000229,
+ * fo:color inherited. svg:fill is the region fill, not a label color.
  */
 
 const FONT = 'Inter, "Noto Sans SC", sans-serif';
@@ -135,14 +142,16 @@ export function defaultSheetTheme(): Record<string, unknown> {
     }),
     boundary: role({
       "fo:font-family": FONT,
-      "fo:font-size": "12pt",
+      "fo:font-size": "14pt",
       "fo:font-weight": "400",
-      "fo:color": "#241f1a",
+      "fo:font-style": "normal",
+      "fo:color": "inherited",
+      "fo:text-decoration": "none",
       "fo:text-align": "center",
-      "svg:fill": "#241f1a",
-      "fill-pattern": "none",
+      "svg:fill": "#000229",
+      "fill-pattern": "solid",
       "line-width": "2",
-      "line-color": "#8a8175",
+      "line-color": "#000229",
       "line-pattern": "dash",
       "shape-class": "org.xmind.boundaryShape.roundedRect",
     }),

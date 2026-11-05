@@ -259,6 +259,26 @@ export function setNotes(topic: Topic, text: string, realHtml: string): void {
   topic.notes = { ...topic.notes, plain: { content: text }, realHTML: { content: realHtml } };
 }
 
+/** Copy a quick-style role onto topic.style, or clear those keys when properties is null. Other style keys stay. */
+export function setQuickStyle(topic: Topic, properties: Record<string, string> | null, ownedKeys: readonly string[]): void {
+  const next: Record<string, string> = { ...(topic.style?.properties ?? {}) };
+  for (const key of ownedKeys) delete next[key];
+  if (properties) {
+    for (const [key, value] of Object.entries(properties)) {
+      if (value) next[key] = value;
+    }
+  }
+  if (Object.keys(next).length === 0) {
+    if (!topic.style) return;
+    const style = { ...topic.style };
+    delete style.properties;
+    if (Object.keys(style).length === 0) delete topic.style;
+    else topic.style = style;
+    return;
+  }
+  topic.style = { ...(topic.style ?? {}), properties: next };
+}
+
 export function setHref(topic: Topic, href: string): void {
   const text = href.trim();
   if (!text) delete topic.href;

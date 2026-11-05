@@ -44,7 +44,7 @@ test("fold a branch, switch structure, and round-trip a marker", async ({ page }
   await page.getByRole("button", { name: "Collapse 🛠️ 27 Tools" }).click();
   await expect(page.getByRole("button", { name: "Tier 1 — File & Sheet Mgmt", exact: true })).toHaveCount(0);
 
-  await page.getByLabel("Structure").selectOption("org.xmind.ui.logic.right");
+  await page.getByTestId("structure").selectOption("org.xmind.ui.logic.right");
   await expect(page.getByTestId("map")).toHaveAttribute("data-structure", "org.xmind.ui.logic.right");
 
   await page.getByRole("button", { name: "MIT License", exact: true }).click();
@@ -115,8 +115,36 @@ test("theme colors, svg and pdf export, and clockwise structure", async ({ page 
   const pdf = readFileSync((await pdfDownload.path())!);
   expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
 
-  await page.getByLabel("Structure").selectOption("org.xmind.ui.map.clockwise");
+  await page.getByTestId("structure").selectOption("org.xmind.ui.map.clockwise");
   await expect(page.getByTestId("map")).toHaveAttribute("data-structure", "org.xmind.ui.map.clockwise");
+  await expect(page.locator('[data-testid="map"] svg rect[data-kind="boundary"]').first()).toHaveAttribute("fill", "#000229");
+});
+
+test("labels show on the topic, quick style applies, and a flag marker round-trips", async ({ page }) => {
+  const source = page.locator("[data-topic]").filter({ hasText: "github.com/mab-go/xmind-mcp" });
+  await expect(source).toContainText("source");
+
+  await page.getByRole("button", { name: "MIT License", exact: true }).click();
+  await page.getByRole("button", { name: "Important", exact: true }).click();
+  await expect(page.getByRole("button", { name: "MIT License", exact: true })).toHaveCSS("background-color", "rgb(70, 4, 0)");
+  await page.getByRole("button", { name: "Flag red", exact: true }).click();
+  await expect(page.locator('[data-marker-id="flag-red"]').first()).toBeVisible();
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "Save", exact: true }).click(),
+  ]);
+  const book = readXMind(readFileSync((await download.path())!));
+  const project = book.sheets[0]?.rootTopic.children?.attached?.find((topic) => topic.title === "📋 Project");
+  const license = project?.children?.attached?.find((topic) => topic.title === "MIT License");
+  expect(license?.style?.properties?.["svg:fill"]?.toLowerCase()).toBe("#460400");
+  expect(license?.style?.properties?.["fill-pattern"]).toBe("solid");
+  expect(license?.markers?.some((marker) => marker.markerId === "flag-red")).toBe(true);
+  const linked = project?.children?.attached?.find((topic) => topic.title === "github.com/mab-go/xmind-mcp");
+  expect(linked?.labels).toEqual(["source"]);
+  expect(book.sheets[0]?.theme?.colorThemeId).toBe("Rainbow-#000229-MULTI_LINE_COLORS");
+  expect((book.sheets[0]?.theme?.map as { properties?: Record<string, string> } | undefined)?.properties?.["color-list"]).toContain("#000229");
+  expect(book.sheets[0]?.relationships?.[0]?.controlPoints?.["0"]?.x).toBe(-186);
 });
 
 test("adds a parent, a floating topic, and a second sheet", async ({ page }) => {
