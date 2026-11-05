@@ -1,8 +1,11 @@
 import { sheetsFromContentXml } from "./legacy.js";
+import { defaultSheetTheme } from "./theme.js";
 import { coerceTopicFields, prepareWorkbook } from "./prepare.js";
 import { CONTENT_XML_STUB_TEXT } from "./stub.js";
 import type { Manifest, Metadata, Sheet, Workbook, ZipMember } from "./types.js";
 import { unzipMembers, zipStored } from "./zip.js";
+
+export { defaultSheetTheme };
 
 export type {
   Boundary,

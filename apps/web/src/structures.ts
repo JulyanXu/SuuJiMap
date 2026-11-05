@@ -2,6 +2,8 @@
 export const STRUCTURES = [
   { id: "org.xmind.ui.map.unbalanced", label: "Map, unbalanced" },
   { id: "org.xmind.ui.map", label: "Map, balanced" },
+  { id: "org.xmind.ui.map.clockwise", label: "Map, clockwise" },
+  { id: "org.xmind.ui.map.anticlockwise", label: "Map, anticlockwise" },
   { id: "org.xmind.ui.logic.right", label: "Logic, right" },
   { id: "org.xmind.ui.logic.left", label: "Logic, left" },
   { id: "org.xmind.ui.org-chart.down", label: "Org chart, down" },

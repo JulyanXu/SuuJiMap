@@ -2,6 +2,10 @@ import type { Topic } from "xmind-workbook";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { attachedOf, isFolded } from "./tree.ts";
 
+function detachedOf(topic: Topic): Topic[] {
+  return topic.children?.detached ?? [];
+}
+
 export function Outliner({
   root,
   selectedId,
@@ -46,6 +50,29 @@ export function Outliner({
         onIndent={onIndent}
         onOutdent={onOutdent}
       />
+      {detachedOf(root).length > 0 && (
+        <div className="mt-6 border-t border-[#e7e0d4] pt-3">
+          <p className="mb-1 text-xs font-medium text-[#5c564c]">Floating</p>
+          {detachedOf(root).map((topic) => (
+            <Row
+              key={topic.id}
+              topic={topic}
+              depth={0}
+              selectedId={selectedId}
+              editingId={editingId}
+              draft={draft}
+              onDraft={onDraft}
+              onSelect={onSelect}
+              onEdit={onEdit}
+              onFinish={onFinish}
+              onCancel={onCancel}
+              onFold={onFold}
+              onIndent={onIndent}
+              onOutdent={onOutdent}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

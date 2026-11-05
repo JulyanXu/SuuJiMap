@@ -1,3 +1,4 @@
+import { defaultSheetTheme } from "./theme.js";
 import type { Manifest, Marker, Metadata, Sheet, Topic, Workbook } from "./types.js";
 
 const CHILD_KEYS = ["attached", "detached", "summary", "callout"] as const;
@@ -82,6 +83,7 @@ function prepareSheet(input: Sheet): Sheet {
   if (typeof sheet.title !== "string") sheet.title = "";
   if (!isRecord(sheet.rootTopic)) throw new Error("sheet.rootTopic is required");
   sheet.rootTopic = prepareTopic(sheet.rootTopic, true);
+  if (!isRecord(sheet.theme)) sheet.theme = defaultSheetTheme();
   if (Array.isArray(sheet.relationships)) {
     for (const relationship of sheet.relationships) {
       if (isRecord(relationship) && blank(relationship.id)) relationship.id = newId();

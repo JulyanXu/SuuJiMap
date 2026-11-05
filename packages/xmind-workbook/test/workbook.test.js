@@ -91,6 +91,13 @@ test("fresh write emits the MVP member set, STORE, and reads back", () => {
   assert.equal(writtenSheets[0].class, "sheet");
   assert.equal(writtenSheets[0].rootTopic.class, "topic");
   assert.equal(writtenSheets[0].rootTopic.structureClass, "org.xmind.ui.map.unbalanced");
+  const freshTheme = writtenSheets[0].theme;
+  assert.match(freshTheme.centralTopic.properties["fo:font-family"], /Inter/);
+  assert.match(freshTheme.centralTopic.properties["fo:font-family"], /Noto Sans SC/);
+  assert.equal(JSON.stringify(freshTheme).includes("NeverMind"), false);
+  assert.equal(freshTheme.centralTopic.properties["shape-class"], "org.xmind.topicShape.roundedRect");
+  assert.equal(freshTheme.map.properties["svg:fill"], "#f7f4ee");
+  assert.equal(freshTheme.skeletonThemeId, undefined);
   assert.match(writtenSheets[0].id, uuidV4);
   assert.match(writtenSheets[0].rootTopic.id, uuidV4);
   assert.equal(writtenSheets[0].rootTopic.children.attached[0].class, undefined);
@@ -198,6 +205,9 @@ test("mab-example sheet title, topic tree, and extra members survive rewrite", (
   assert.deepEqual(again.sheets[0].xCustom, { keep: true });
   assert.equal(again.sheets[0].rootTopic.xCustom, "yes");
   assert.equal(again.sheets[0].revisionId, sheet.revisionId);
+  assert.equal(again.sheets[0].theme.centralTopic.properties["fo:font-family"], "NeverMind");
+  assert.equal(again.sheets[0].theme.skeletonThemeId, "db4a5df4db39a8cd1310ea55ea");
+  assert.equal(again.sheets[0].theme.colorThemeId, "Rainbow-#000229-MULTI_LINE_COLORS");
   assert.equal(again.metadata.creator.name, "Vana");
   assert.ok(again.manifest["file-entries"]["Thumbnails/thumbnail.png"]);
   const pngAgain = again.extras.find((entry) => entry.name === "Thumbnails/thumbnail.png");
@@ -240,6 +250,8 @@ test("sdk workbook sheet title, notes, and markers", () => {
   assert.equal(again.sheets[0].class, "sheet");
   assert.equal(again.sheets[0].topicPositioning, "fixed");
   assert.equal(again.sheets[0].rootTopic.structureClass, "org.xmind.ui.map.unbalanced");
+  assert.match(again.sheets[0].theme.centralTopic.properties["fo:font-family"], /Inter/);
+  assert.equal(JSON.stringify(again.sheets[0].theme).includes("NeverMind"), false);
   assert.equal(againMain.children.attached[0].structureClass, undefined);
   assert.equal(againMain.notes.plain.content, "This is a note");
   assert.ok(againMain.notes.html);
